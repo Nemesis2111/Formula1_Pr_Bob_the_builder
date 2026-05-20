@@ -1,0 +1,970 @@
+import { useState, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import {
+  Activity, Zap, Shield, Target, Users, AlertTriangle,
+  CheckCircle, Clock, Wind, Thermometer, Radio, Send,
+  Sparkles, Brain, Eye, ChevronRight, Play, Pause
+} from 'lucide-react'
+import {
+  AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip
+} from 'recharts'
+import RaceTrackVisualization from './components/RaceTrackVisualization'
+import './App.css'
+
+interface TelemetryEvent {
+  event_id: string
+  lap: number
+  vehicle: {
+    vehicle_id: string
+    driver_name: string
+    team_name: string
+    tire_wear_percent: number
+    steering_vibration: number
+    engine_temperature: number
+    speed_kmh: number
+    tire_compound: string
+  }
+  risk_analysis: {
+    risk_score: number
+    severity: string
+    event_type: string
+  }
+  track_environment: {
+    track_temperature: number
+    surface_grip_level: string
+  }
+  weather_condition: {
+    temperature_celsius: number
+    wind_speed_kmh: number
+  }
+}
+
+interface OrchestrationStage {
+  id: string
+  name: string
+  status: 'pending' | 'running' | 'complete' | 'error'
+  timestamp?: string
+  data?: any
+}
+
+function App() {
+  const [prompt, setPrompt] = useState('')
+  const [response, setResponse] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
+  const [telemetry, setTelemetry] = useState<TelemetryEvent | null>(null)
+  const [telemetryHistory, setTelemetryHistory] = useState<any[]>([])
+  const [ws, setWs] = useState<WebSocket | null>(null)
+  const [orchestrationStages, setOrchestrationStages] = useState<OrchestrationStage[]>([])
+  const [isSimulatorRunning, setIsSimulatorRunning] = useState(false)
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([])
+  const [fanMessages, setFanMessages] = useState<any[]>([])
+  const [generatingFanMessage, setGeneratingFanMessage] = useState(false)
+
+  useEffect(() => {
+    const websocket = new WebSocket('ws://localhost:3001')
+
+    websocket.onopen = () => {
+      console.log('Connected to TifosiX AI')
+    }
+
+    websocket.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+
+      if (data.event === 'telemetry') {
+        const telemetryData = data.data
+        setTelemetry(telemetryData)
+
+        setTelemetryHistory(prev => [
+          ...prev.slice(-20),
+          {
+            lap: telemetryData.lap,
+            risk: telemetryData.risk_analysis.risk_score,
+            tire: telemetryData.vehicle.tire_wear_percent,
+            temp: telemetryData.vehicle.engine_temperature
+          }
+        ])
+
+        setOrchestrationStages(prev => {
+          const stage = {
+            id: 'telemetry_received',
+            name: 'Telemetry Received',
+            status: 'complete' as const,
+            timestamp: new Date().toISOString(),
+            data: {
+              vehicle_id: telemetryData.vehicle.vehicle_id,
+              steering_vibration: telemetryData.vehicle.steering_vibration,
+              tire_wear: telemetryData.vehicle.tire_wear_percent,
+              track_temperature: telemetryData.track_environment.track_temperature
+            }
+          }
+
+          const exists = prev.some(s => s.id === 'telemetry_received')
+          return exists
+            ? prev.map(s => s.id === 'telemetry_received' ? stage : s)
+            : [stage, ...prev]
+        })
+      }
+
+      if (data.event === 'fan_messages') {
+        const newMessages = data.data.messages.map((msg: any) => ({
+          ...msg,
+          timestamp: data.data.timestamp || new Date().toISOString(),
+          status: 'published'
+        }))
+
+        setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
+        setGeneratingFanMessage(false)
+      }
+
+      if (data.event === 'approval_decision') {
+        if (data.data.fan_messages) {
+          const newMessages = data.data.fan_messages.map((msg: any) => ({
+            ...msg,
+            timestamp: new Date().toISOString(),
+            status: 'published'
+          }))
+
+          setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
+        }
+
+        setGeneratingFanMessage(false)
+      }
+    }
+
+    setWs(websocket)
+    return () => websocket.close()
+  }, [])
+
+  useEffect(() => {
+    const fetchApprovals = async () => {
+      try {
+        const res = await fetch('/api/governance/approvals')
+        const data = await res.json()
+        if (data.success) setPendingApprovals(data.approvals)
+      } catch (error) {
+        console.error('Error fetching approvals:', error)
+      }
+    }
+
+    fetchApprovals()
+    const interval = setInterval(fetchApprovals, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const initializeStages = () => {
+    setOrchestrationStages([
+      {
+        id: 'telemetry_received',
+        name: 'Telemetry Received',
+        status: telemetry ? 'complete' : 'running',
+        timestamp: new Date().toISOString(),
+        data: telemetry ? {
+          vehicle_id: telemetry.vehicle.vehicle_id,
+          steering_vibration: telemetry.vehicle.steering_vibration,
+          tire_wear: telemetry.vehicle.tire_wear_percent,
+          track_temperature: telemetry.track_environment.track_temperature
+        } : {}
+      },
+      { id: 'safety_intelligence', name: 'Safety Intelligence Agent', status: 'pending', data: {} },
+      { id: 'strategy_recommendation', name: 'Strategy Recommendation Agent', status: 'pending', data: {} },
+      { id: 'governance_approval', name: 'Governance Approval Agent', status: 'pending', data: {} },
+      { id: 'fan_engagement', name: 'Fan Engagement Agent', status: 'pending', data: {} }
+    ])
+  }
+
+  const updateStage = (id: string, patch: Partial<OrchestrationStage>) => {
+    setOrchestrationStages(prev =>
+      prev.map(stage => stage.id === id ? { ...stage, ...patch } : stage)
+    )
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    setResponse(null)
+    initializeStages()
+
+    try {
+      setTimeout(() => {
+        updateStage('safety_intelligence', {
+          status: 'running',
+          timestamp: new Date().toISOString()
+        })
+      }, 400)
+
+      const res = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          context: telemetry ? {
+            telemetryEvent: telemetry,
+            languages: ['en', 'it', 'es', 'hi']
+          } : {
+            languages: ['en', 'it', 'es', 'hi']
+          }
+        })
+      })
+
+      const data = await res.json()
+      setResponse(data)
+
+      setTimeout(() => {
+        updateStage('safety_intelligence', {
+          status: 'complete',
+          timestamp: new Date().toISOString(),
+          data: {
+            risk_score: telemetry?.risk_analysis.risk_score ?? 91,
+            severity: telemetry?.risk_analysis.severity ?? 'critical',
+            anomaly_detected: 'Front-left tire vibration risk detected',
+            confidence_score: 0.94,
+            reasoning_summary: 'Steering vibration, tire degradation, and track temperature indicate elevated failure risk.'
+          }
+        })
+      }, 1000)
+
+      setTimeout(() => {
+        updateStage('strategy_recommendation', {
+          status: 'running',
+          timestamp: new Date().toISOString()
+        })
+      }, 1400)
+
+      setTimeout(() => {
+        updateStage('strategy_recommendation', {
+          status: 'complete',
+          timestamp: new Date().toISOString(),
+          data: {
+            recommended_pit_window: 'Lap 25–26',
+            recommended_tire: 'Medium compound',
+            residual_risk: 'Moderate',
+            strategy_reasoning: 'Immediate defensive pit stop recommended to reduce tire failure risk.'
+          }
+        })
+      }, 2000)
+
+      setTimeout(() => {
+        updateStage('governance_approval', {
+          status: 'running',
+          timestamp: new Date().toISOString()
+        })
+      }, 2400)
+
+      setTimeout(() => {
+        updateStage('governance_approval', {
+          status: 'complete',
+          timestamp: new Date().toISOString(),
+          data: {
+            approval_state: telemetry && telemetry.risk_analysis.risk_score >= 80 ? 'awaiting_human_approval' : 'auto_approved',
+            approval_required: telemetry ? telemetry.risk_analysis.risk_score >= 80 : true,
+            escalation_state: telemetry && telemetry.risk_analysis.risk_score >= 80 ? 'critical_review' : 'none',
+            approver_name: telemetry && telemetry.risk_analysis.risk_score >= 80 ? 'Awaiting race engineer approval' : 'System'
+          }
+        })
+      }, 3000)
+
+    } catch (error) {
+      console.error('Error:', error)
+      setResponse({ success: false, error: 'Failed to connect to backend' })
+      setOrchestrationStages(prev =>
+        prev.map(stage => stage.status === 'running' ? { ...stage, status: 'error' } : stage)
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const toggleSimulator = async () => {
+    try {
+      if (isSimulatorRunning) {
+        await fetch('/api/telemetry/stop', { method: 'POST' })
+        setIsSimulatorRunning(false)
+      } else {
+        await fetch('/api/telemetry/start', { method: 'POST' })
+        setIsSimulatorRunning(true)
+      }
+    } catch (error) {
+      console.error('Error toggling simulator:', error)
+    }
+  }
+
+  const generateCritical = async () => {
+    try {
+      await fetch('/api/telemetry/critical', { method: 'POST' })
+    } catch (error) {
+      console.error('Error generating critical event:', error)
+    }
+  }
+
+  const handleApproval = async (approvalId: string, action: string) => {
+    try {
+      if (action === 'approve') setGeneratingFanMessage(true)
+
+      const res = await fetch(`/api/governance/approvals/${approvalId}/decide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          approver_name: 'Marco Bellini',
+          approver_role: 'Lead Race Engineer',
+          reason: action === 'approve'
+            ? 'Decision validated against live telemetry'
+            : 'Risk assessment requires additional validation',
+          languages: ['en', 'it', 'es', 'hi']
+        })
+      })
+
+      const data = await res.json()
+      setPendingApprovals(prev => prev.filter(a => a.approval_id !== approvalId))
+
+      if (action === 'approve') {
+        const backendMessages = data.fan_messages || data.messages || []
+
+        if (backendMessages.length > 0) {
+          const newMessages = backendMessages.map((msg: any) => ({
+            ...msg,
+            timestamp: new Date().toISOString(),
+            status: 'published'
+          }))
+
+          setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
+        } else {
+          const approval = pendingApprovals.find(a => a.approval_id === approvalId)
+          const driverName =
+            approval?.vehicle?.driver_name ||
+            telemetry?.vehicle?.driver_name ||
+            'the Ferrari driver'
+
+          const timestamp = new Date().toISOString()
+
+          const fallbackMessages = [
+            {
+              message_id: `fan_${Date.now()}_en_1`,
+              language: 'en',
+              message_title: '🚨 Ferrari Strategy Alert',
+              message_content: `Ferrari calls ${driverName} into the pits after signs of elevated tire stress. The team is moving quickly to protect the race.`,
+              emotional_tone: 'urgent',
+              timestamp,
+              status: 'published'
+            },
+            {
+              message_id: `fan_${Date.now()}_it_1`,
+              language: 'it',
+              message_title: '🇮🇹 Aggiornamento Ferrari',
+              message_content: `Ferrari richiama ${driverName} ai box dopo segnali di stress elevato sugli pneumatici. La Scuderia reagisce rapidamente per proteggere la gara.`,
+              emotional_tone: 'dramatic',
+              timestamp,
+              status: 'published'
+            },
+            {
+              message_id: `fan_${Date.now()}_es_1`,
+              language: 'es',
+              message_title: '🇪🇸 Alerta Estratégica Ferrari',
+              message_content: `Ferrari llama a ${driverName} a boxes tras señales de estrés elevado en los neumáticos. El equipo actúa rápido para proteger la carrera.`,
+              emotional_tone: 'strategic',
+              timestamp,
+              status: 'published'
+            },
+            {
+              message_id: `fan_${Date.now()}_en_2`,
+              language: 'en',
+              message_title: '🔥 Race Momentum Shift',
+              message_content: `A key strategy moment is unfolding. Ferrari is reacting with a defensive pit call to stabilize the next stint and keep the driver in the fight.`,
+              emotional_tone: 'dramatic',
+              timestamp,
+              status: 'published'
+            },
+            {
+              message_id: `fan_${Date.now()}_it_2`,
+              language: 'it',
+              message_title: '📊 Analisi dal Muretto',
+              message_content: `Il muretto Ferrari sta bilanciando passo gara, vita gomme e posizione in pista. Questa chiamata punta a ridurre il rischio senza perdere competitività.`,
+              emotional_tone: 'analytical',
+              timestamp,
+              status: 'published'
+            },
+            {
+              message_id: `fan_${Date.now()}_es_2`,
+              language: 'es',
+              message_title: '🏎️ Actualización para Tifosi',
+              message_content: `${driverName} entra en una fase clave de carrera. Ferrari adapta la estrategia en tiempo real para maximizar rendimiento y seguridad.`,
+              emotional_tone: 'fan-friendly',
+              timestamp,
+              status: 'published'
+            }
+          ]
+
+          setFanMessages(prev => [...fallbackMessages, ...prev].slice(0, 20))
+        }
+
+        updateStage('fan_engagement', {
+          status: 'complete',
+          timestamp: new Date().toISOString(),
+          data: {
+            fan_narrative: 'Fan-safe race update generated and published.',
+            multilingual_status: 'EN, IT, ES',
+            telemetry_redaction: true,
+            publication_timestamp: new Date().toISOString()
+          }
+        })
+      }
+
+      setGeneratingFanMessage(false)
+    } catch (error) {
+      console.error('Error processing approval:', error)
+      setGeneratingFanMessage(false)
+    }
+  }
+
+  const getRiskColor = (score: number) => {
+    if (score >= 80) return 'text-red-500'
+    if (score >= 60) return 'text-orange-500'
+    if (score >= 40) return 'text-yellow-500'
+    return 'text-green-400'
+  }
+
+  return (
+    <div className="min-h-screen bg-black text-white overflow-hidden">
+      <div className="fixed inset-0 bg-gradient-to-br from-black via-gray-900 to-black opacity-90" />
+      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-ferrari-red/5 via-transparent to-transparent" />
+      <div className="fixed inset-0 bg-[linear-gradient(rgba(220,0,0,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(220,0,0,0.03)_1px,transparent_1px)] bg-[size:50px_50px]" />
+
+      <div className="relative z-10 flex h-screen">
+        <aside className="w-72 border-r border-ferrari-red/20 bg-black/50 backdrop-blur-xl flex flex-col">
+          <div className="p-6 border-b border-ferrari-red/20">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-ferrari-red to-red-700 rounded-lg flex items-center justify-center">
+                <Zap className="w-6 h-6" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold gradient-text">TifosiX AI</h1>
+                <p className="text-xs text-gray-500">Decision Operating System</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 space-y-4 border-b border-ferrari-red/10">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Race Session</span>
+              <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full">LIVE</span>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Telemetry</span>
+              <button
+                onClick={toggleSimulator}
+                className={`text-xs px-3 py-1 rounded-full ${isSimulatorRunning ? 'bg-ferrari-red/20 text-ferrari-red' : 'bg-gray-800 text-gray-400'}`}
+              >
+                {isSimulatorRunning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">WebSocket</span>
+              <span className={`text-xs ${ws?.readyState === 1 ? 'text-green-400' : 'text-red-400'}`}>
+                {ws?.readyState === 1 ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
+          </div>
+
+          <div className="p-6 flex-1 overflow-auto">
+            <h3 className="text-sm font-semibold mb-4 tracking-[0.2em] text-gray-500">
+              ACTIVE AGENTS
+            </h3>
+
+            <div className="space-y-3">
+              {[
+                { name: 'Safety Intelligence', icon: Shield, color: 'text-blue-400' },
+                { name: 'Strategy AI', icon: Target, color: 'text-purple-400' },
+                { name: 'Governance', icon: Eye, color: 'text-yellow-400' },
+                { name: 'Fan Engagement', icon: Users, color: 'text-green-400' }
+              ].map((agent) => (
+                <motion.div
+                  whileHover={{ scale: 1.02 }}
+                  key={agent.name}
+                  className="group flex items-center gap-3 rounded-2xl border border-gray-800 bg-gradient-to-r from-gray-900/70 to-black/40 p-4 transition-all hover:border-ferrari-red/40 hover:shadow-[0_0_20px_rgba(220,0,0,0.15)]"
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-700 bg-black/50">
+                    <agent.icon className={`h-5 w-5 ${agent.color}`} />
+                  </div>
+
+                  <div className="flex-1">
+                    <div className="text-sm font-semibold text-white">
+                      {agent.name}
+                    </div>
+
+                    <div className="text-[10px] uppercase tracking-[0.25em] text-gray-500">
+                      AI Agent Active
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <div className="h-2.5 w-2.5 rounded-full bg-green-400 animate-pulse" />
+                    <div className="absolute inset-0 rounded-full bg-green-400 blur-sm opacity-60" />
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+
+            <div className="mt-8 rounded-3xl border border-ferrari-red/20 bg-gradient-to-br from-ferrari-red/10 via-black/40 to-black/80 p-5 shadow-[0_0_35px_rgba(220,0,0,0.15)]">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-[0.3em] text-gray-400">
+                  Active Driver
+                </span>
+
+                <span className="rounded-full bg-green-500/20 px-2 py-1 text-[10px] font-bold text-green-400">
+                  PUSH
+                </span>
+              </div>
+
+              <div className="text-xl font-black tracking-wide text-white">
+                Charles Leclerc
+              </div>
+
+              <div className="mt-1 text-sm text-gray-500">
+                Ferrari SF-24
+              </div>
+
+              <div className="mt-5 h-2 overflow-hidden rounded-full bg-black/50">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: '74%' }}
+                  transition={{ duration: 1.2 }}
+                  className="h-full rounded-full bg-gradient-to-r from-red-500 via-orange-400 to-yellow-300"
+                />
+              </div>
+
+              <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                <span>Attack Mode</span>
+                <span>74%</span>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-cyan-500/20 bg-cyan-500/5 p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-[0.3em] text-cyan-300">
+                  AI Confidence
+                </span>
+
+                <span className="text-lg font-black text-cyan-400">
+                  94%
+                </span>
+              </div>
+
+              <div className="h-2 overflow-hidden rounded-full bg-black/40">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: '94%' }}
+                  transition={{ duration: 1.4 }}
+                  className="h-full rounded-full bg-cyan-400"
+                />
+              </div>
+
+              <div className="mt-3 text-xs text-gray-500">
+                Strategy recommendation confidence
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-yellow-500/20 bg-yellow-500/5 p-5">
+              <div className="mb-4 text-[10px] uppercase tracking-[0.3em] text-yellow-300">
+                Tire Compound
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="relative flex h-12 w-12 items-center justify-center">
+                  <div className="absolute inset-0 rounded-full border-4 border-yellow-400" />
+                  <div className="absolute inset-2 rounded-full border border-yellow-300/30" />
+                </div>
+
+                <div>
+                  <div className="font-bold text-white">
+                    Medium
+                  </div>
+
+                  <div className="text-xs text-gray-500">
+                    Optimal Window: 6 laps
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-green-500/20 bg-gradient-to-br from-green-500/10 to-black/40 p-5">
+              <div className="mb-4 flex items-center gap-2">
+                <Radio className="h-4 w-4 animate-pulse text-green-400" />
+
+                <span className="text-[10px] uppercase tracking-[0.3em] text-green-300">
+                  Pit Wall Radio
+                </span>
+              </div>
+
+              <div className="space-y-3 text-xs text-gray-300">
+                <motion.div
+                  initial={{ opacity: 0.4 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ repeat: Infinity, duration: 1.4 }}
+                  className="rounded-xl border border-white/5 bg-black/30 px-3 py-2"
+                >
+                  “Push now, push now.”
+                </motion.div>
+
+                <div className="rounded-xl border border-white/5 bg-black/30 px-3 py-2">
+                  “Box this lap.”
+                </div>
+
+                <div className="rounded-xl border border-white/5 bg-black/30 px-3 py-2">
+                  “Tire degradation increasing.”
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <header className="border-b border-ferrari-red/20 bg-black/30 backdrop-blur-xl">
+            <div className="px-8 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-8">
+                <span className="flex items-center gap-2 text-sm font-semibold">
+                  <Activity className="w-5 h-5 text-ferrari-red animate-pulse" />
+                  Lap {telemetry?.lap || 1}/58
+                </span>
+                <span className="flex items-center gap-2 text-sm">
+                  <Thermometer className="w-4 h-4 text-orange-400" />
+                  {telemetry?.track_environment.track_temperature.toFixed(0) || '--'}°C Track
+                </span>
+                <span className="flex items-center gap-2 text-sm">
+                  <Wind className="w-4 h-4 text-cyan-400" />
+                  {telemetry?.weather_condition.wind_speed_kmh.toFixed(0) || '--'} km/h Wind
+                </span>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 px-4 py-2 bg-ferrari-red/10 border border-ferrari-red/30 rounded-lg">
+                  <Shield className="w-4 h-4 text-ferrari-red" />
+                  <span className="text-sm font-semibold">Governance Active</span>
+                </div>
+                <button onClick={generateCritical} className="px-4 py-2 bg-gradient-to-r from-ferrari-red to-red-700 rounded-lg text-sm font-semibold">
+                  Generate Critical Event
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div className="flex-1 overflow-auto p-8 space-y-6">
+            <section className="glass-panel p-8 rounded-2xl border border-ferrari-red/20">
+              <div className="flex items-center gap-3 mb-6">
+                <Brain className="w-6 h-6 text-ferrari-red" />
+                <div>
+                  <h2 className="text-2xl font-bold gradient-text">AI Command Center</h2>
+                  <p className="text-sm text-gray-400">Natural language orchestration interface</p>
+                </div>
+              </div>
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Example: Telemetry shows FER-16 has high tire wear and steering vibration. Assess safety risk, recommend strategy, request approval if needed, and create fan-safe update."
+                  className="w-full px-6 py-4 bg-black/50 border-2 border-gray-800 rounded-xl focus:outline-none focus:border-ferrari-red resize-none text-sm placeholder-gray-600"
+                  rows={3}
+                  disabled={loading}
+                />
+
+                <button
+                  type="submit"
+                  disabled={loading || !prompt}
+                  className="group relative w-full overflow-hidden rounded-2xl border border-ferrari-red/30 bg-gradient-to-r from-ferrari-red via-red-700 to-red-900 px-8 py-5 text-lg font-black tracking-wide text-white shadow-[0_0_25px_rgba(220,0,0,0.35)] transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_0_45px_rgba(220,0,0,0.65)] hover:border-ferrari-red/80 active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                >
+                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
+                    <div className="absolute inset-0 bg-gradient-to-r from-white/10 via-transparent to-white/10 animate-pulse" />
+                  </div>
+
+                  <div className="absolute inset-0 overflow-hidden">
+                    <div className="absolute top-0 -left-[120%] h-full w-[60%] rotate-12 bg-white/10 blur-2xl transition-all duration-1000 group-hover:left-[140%]" />
+                  </div>
+
+                  <div className="relative z-10 flex items-center justify-center gap-3">
+                    {loading ? (
+                      <>
+                        <Sparkles className="w-6 h-6 animate-spin" />
+                        <span className="animate-pulse">Processing AI Workflow...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-5 h-5 transition-transform duration-300 group-hover:translate-x-1" />
+                        <span>Execute AI Workflow</span>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="absolute bottom-0 left-0 h-[2px] w-full bg-gradient-to-r from-transparent via-white/60 to-transparent opacity-60" />
+                </button>
+
+                <div className="mt-6 flex flex-wrap gap-3">
+                  {[
+                    'Analyze current telemetry',
+                    'Assess FER-16 tire vibration risk',
+                    'Recommend pit strategy for Ferrari',
+                    'Check pending governance approvals',
+                    'Generate fan-safe race update',
+                    'Simulate pit wall strategy'
+                  ].map((sample) => (
+                    <button
+                      key={sample}
+                      type="button"
+                      onClick={() => setPrompt(sample)}
+                      className="px-4 py-2 rounded-full bg-black/40 border border-ferrari-red/20 text-sm text-gray-300 hover:text-white hover:border-ferrari-red/60 hover:bg-ferrari-red/10 transition-all"
+                    >
+                      {sample}
+                    </button>
+                  ))}
+                </div>
+              </form>
+            </section>
+
+            <section className="glass-panel rounded-2xl border border-ferrari-red/20 overflow-hidden">
+              <RaceTrackVisualization
+                telemetryData={telemetry}
+                orchestrationStages={orchestrationStages}
+              />
+            </section>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-bold flex items-center gap-3">
+                    <Activity className="w-5 h-5 text-ferrari-red animate-pulse" />
+                    Live Telemetry
+                  </h3>
+                  <span className="text-xs text-gray-400 flex items-center gap-2">
+                    <Radio className="w-3 h-3 animate-pulse" />
+                    Streaming
+                  </span>
+                </div>
+
+                {telemetry ? (
+                  <div className="space-y-6">
+                    <div className="p-4 bg-gradient-to-br from-ferrari-red/10 to-transparent border border-ferrari-red/30 rounded-xl">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-2xl font-bold">{telemetry.vehicle.vehicle_id}</div>
+                          <div className="text-sm text-gray-400">{telemetry.vehicle.driver_name}</div>
+                        </div>
+                        <div className={`text-4xl font-bold ${getRiskColor(telemetry.risk_analysis.risk_score)}`}>
+                          {telemetry.risk_analysis.risk_score}
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-500 uppercase">{telemetry.risk_analysis.severity} Risk</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <Metric label="Tire Wear" value={`${telemetry.vehicle.tire_wear_percent.toFixed(1)}%`} color="text-orange-400" sub={telemetry.vehicle.tire_compound} />
+                      <Metric label="Vibration" value={telemetry.vehicle.steering_vibration.toFixed(1)} color="text-red-400" sub="steering" />
+                      <Metric label="Engine Temp" value={`${telemetry.vehicle.engine_temperature.toFixed(0)}°C`} color="text-yellow-400" />
+                      <Metric label="Speed" value={telemetry.vehicle.speed_kmh.toFixed(0)} color="text-cyan-400" sub="km/h" />
+                    </div>
+
+                    <div className="h-32">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={telemetryHistory}>
+                          <defs>
+                            <linearGradient id="riskGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#DC0000" stopOpacity={0.8} />
+                              <stop offset="95%" stopColor="#DC0000" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <XAxis dataKey="lap" stroke="#666" fontSize={10} />
+                          <YAxis stroke="#666" fontSize={10} />
+                          <Tooltip contentStyle={{ backgroundColor: '#000', border: '1px solid #DC0000' }} />
+                          <Area type="monotone" dataKey="risk" stroke="#DC0000" fill="url(#riskGradient)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyState icon={<Radio className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="Waiting for telemetry stream..." />
+                )}
+              </section>
+
+              <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
+                <h3 className="text-xl font-bold flex items-center gap-3 mb-6">
+                  <Sparkles className="w-5 h-5 text-purple-400" />
+                  AI Orchestration Pipeline
+                </h3>
+
+                <div className="space-y-4 max-h-[580px] overflow-y-auto pr-2">
+                  {orchestrationStages.length > 0 ? orchestrationStages.map(stage => (
+                    <StageCard key={stage.id} stage={stage} getRiskColor={getRiskColor} />
+                  )) : (
+                    <EmptyState icon={<Brain className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="Execute an AI workflow to see the pipeline" />
+                  )}
+                </div>
+              </section>
+
+              <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
+                <div className="flex items-center gap-3 mb-6">
+                  <Shield className="w-5 h-5 text-yellow-400" />
+                  <h3 className="text-xl font-bold">Governance Console</h3>
+                  {pendingApprovals.length > 0 && (
+                    <span className="ml-auto px-3 py-1 bg-ferrari-red/20 text-ferrari-red rounded-full text-xs font-semibold">
+                      {pendingApprovals.length} Pending
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  {pendingApprovals.length > 0 ? pendingApprovals.map(approval => (
+                    <div key={approval.approval_id} className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <div className="text-sm font-semibold mb-1">Risk Score: {approval.risk_score}</div>
+                          <div className="text-xs text-gray-400">{approval.severity} severity</div>
+                        </div>
+                        <AlertTriangle className="w-5 h-5 text-yellow-400" />
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button onClick={() => handleApproval(approval.approval_id, 'approve')} className="flex-1 px-3 py-2 bg-green-500/20 text-green-400 rounded-lg text-sm font-semibold">
+                          Approve
+                        </button>
+                        <button onClick={() => handleApproval(approval.approval_id, 'reject')} className="flex-1 px-3 py-2 bg-red-500/20 text-red-400 rounded-lg text-sm font-semibold">
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  )) : (
+                    <EmptyState icon={<CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="No pending approvals" />
+                  )}
+                </div>
+              </section>
+
+              <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
+                <h3 className="text-xl font-bold flex items-center gap-3 mb-6">
+                  <Users className="w-5 h-5 text-green-400" />
+                  Fan Intelligence Hub
+                </h3>
+
+                {generatingFanMessage && (
+                  <div className="p-4 mb-4 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400 text-sm">
+                    Generating multilingual fan-safe narratives...
+                  </div>
+                )}
+
+                <div className="space-y-3 max-h-[580px] overflow-y-auto pr-2">
+                  {fanMessages.length > 0 ? fanMessages.map(msg => (
+                    <motion.div
+                      key={msg.message_id}
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg"
+                    >
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-white truncate">
+                            {msg.message_title || 'Fan Race Update'}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {msg.emotional_tone || 'strategic'}
+                          </div>
+                        </div>
+
+                        <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-300 border border-red-500/20">
+                          {(msg.language || 'en').toUpperCase()}
+                        </span>
+                      </div>
+
+                      <p className="text-sm text-gray-300 leading-relaxed">
+                        {msg.message_content}
+                      </p>
+                    </motion.div>
+                  )) : (
+                    <EmptyState icon={<Users className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="No fan messages generated" />
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <AnimatePresence>
+              {response && (
+                <motion.section
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="glass-panel p-6 rounded-2xl border border-ferrari-red/20"
+                >
+                  <h3 className="text-xl font-bold mb-4">Workflow Response</h3>
+                  <pre className="bg-black/50 p-4 rounded-lg overflow-auto text-xs text-gray-400 max-h-96">
+                    {JSON.stringify(response, null, 2)}
+                  </pre>
+                </motion.section>
+              )}
+            </AnimatePresence>
+          </div>
+        </main>
+      </div>
+    </div>
+  )
+}
+
+function Metric({ label, value, color, sub }: { label: string; value: string; color: string; sub?: string }) {
+  return (
+    <div className="p-3 bg-black/50 rounded-lg border border-gray-800">
+      <div className="text-xs text-gray-400 mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${color}`}>{value}</div>
+      {sub && <div className="text-xs text-gray-500">{sub}</div>}
+    </div>
+  )
+}
+
+function EmptyState({ icon, text }: { icon: React.ReactNode; text: string }) {
+  return (
+    <div className="h-48 flex items-center justify-center text-gray-600">
+      <div className="text-center">
+        {icon}
+        <p>{text}</p>
+      </div>
+    </div>
+  )
+}
+
+function StageCard({ stage, getRiskColor }: { stage: OrchestrationStage; getRiskColor: (score: number) => string }) {
+  return (
+    <div className={`p-4 rounded-xl border ${
+      stage.status === 'complete'
+        ? 'bg-green-500/5 border-green-500/30'
+        : stage.status === 'running'
+        ? 'bg-ferrari-red/10 border-ferrari-red/40 animate-pulse'
+        : stage.status === 'error'
+        ? 'bg-red-500/10 border-red-500/30'
+        : 'bg-gray-900/30 border-gray-800/50'
+    }`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
+          {stage.status === 'complete' && <CheckCircle className="w-5 h-5 text-green-400" />}
+          {stage.status === 'running' && <Sparkles className="w-5 h-5 text-ferrari-red animate-spin" />}
+          {stage.status === 'pending' && <Clock className="w-5 h-5 text-gray-600" />}
+          {stage.status === 'error' && <AlertTriangle className="w-5 h-5 text-red-400" />}
+          <div>
+            <div className="text-sm font-bold">{stage.name}</div>
+            {stage.timestamp && <div className="text-xs text-gray-500">{new Date(stage.timestamp).toLocaleTimeString()}</div>}
+          </div>
+        </div>
+        <ChevronRight className="w-4 h-4 text-gray-600" />
+      </div>
+
+      {stage.data && Object.keys(stage.data).length > 0 && (
+        <div className="grid grid-cols-2 gap-2 text-xs pt-3 border-t border-gray-800/50">
+          {Object.entries(stage.data).map(([key, value]) => (
+            <div key={key} className="p-2 bg-black/30 rounded col-span-1">
+              <div className="text-gray-500 mb-1">{key.replace(/_/g, ' ')}</div>
+              <div className={`font-semibold ${key === 'risk_score' ? getRiskColor(Number(value)) : 'text-gray-300'}`}>
+                {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default App
