@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import ibmLogo from './assets/IBM-LOGO.png'
+import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity, Zap, Shield, Target, Users, AlertTriangle,
@@ -47,6 +48,104 @@ interface OrchestrationStage {
   data?: any
 }
 
+// ---------------------------------------------------------------------------
+// Helper: extract per-agent display data from the agent_chain array returned
+// by the backend. Keeps all stage-data logic in one place.
+// ---------------------------------------------------------------------------
+function buildAgentDataMap(agentChain: any[]): Record<string, any> {
+  const map: Record<string, any> = {}
+
+  agentChain.forEach((entry: any) => {
+    if (entry.agent === 'SafetyIntelligenceAgent') {
+      map['safety_intelligence'] = {
+        risk_score:        entry.result?.analysis?.risk_score,
+        severity:          entry.result?.analysis?.severity,
+        anomaly_detected:  entry.result?.analysis?.anomaly_detected || 'Assessed',
+        confidence_score:  entry.result?.analysis?.confidence_score,
+      }
+    }
+
+    if (entry.agent === 'StrategyRecommendationAgent') {
+      map['strategy_recommendation'] = {
+        recommended_pit_window: entry.result?.recommendation?.pit_window || 'Calculated',
+        recommended_tire:       entry.result?.recommendation?.compound   || 'Medium compound',
+        residual_risk:          entry.result?.recommendation?.residual_risk || 'Moderate',
+        strategy_reasoning:     entry.result?.recommendation?.reasoning  || 'Immediate defensive pit stop recommended.',
+      }
+    }
+
+    if (entry.agent === 'GovernanceApprovalAgent') {
+      const rec = entry.result?.approval_record
+      map['governance_approval'] = {
+        approval_state:    rec?.approval_status,
+        approval_required: rec?.requires_human_approval,
+        escalation_state:  rec?.requires_human_approval ? 'critical_review' : 'none',
+        approver_name:     rec?.requires_human_approval
+                             ? 'Awaiting race engineer approval'
+                             : 'System (auto-approved)',
+      }
+    }
+
+    if (entry.agent === 'FanEngagementAgent') {
+      map['fan_engagement'] = {
+        fan_narrative:         entry.result?.messages
+                                 ? 'Fan-safe race update generated and published.'
+                                 : 'Pending approval — narrative staged.',
+        multilingual_status:   'EN, IT, ES, HI',
+        telemetry_redaction:   true,
+        publication_timestamp: new Date().toISOString(),
+      }
+    }
+  })
+
+  return map
+}
+
+// ---------------------------------------------------------------------------
+// Helper: animate stages sequentially using real agent_chain data
+// ---------------------------------------------------------------------------
+function animatePipeline(
+  agentChain: any[],
+  setOrchestrationStages: React.Dispatch<React.SetStateAction<OrchestrationStage[]>>
+) {
+  const stageIds = [
+    'safety_intelligence',
+    'strategy_recommendation',
+    'governance_approval',
+    'fan_engagement',
+  ]
+
+  const dataMap = buildAgentDataMap(agentChain)
+
+  stageIds.forEach((id, i) => {
+    const runAt      = (i + 1) * 800
+    const completeAt = runAt + 600
+
+    setTimeout(() => {
+      setOrchestrationStages(prev =>
+        prev.map(s => s.id === id
+          ? { ...s, status: 'running', timestamp: new Date().toISOString() }
+          : s
+        )
+      )
+    }, runAt)
+
+    setTimeout(() => {
+      setOrchestrationStages(prev =>
+        prev.map(s => s.id === id
+          ? {
+              ...s,
+              status: dataMap[id] ? 'complete' : 'pending',
+              timestamp: new Date().toISOString(),
+              data: dataMap[id] || s.data,
+            }
+          : s
+        )
+      )
+    }, completeAt)
+  })
+}
+
 function App() {
   const [prompt, setPrompt] = useState('')
   const [response, setResponse] = useState<any>(null)
@@ -60,6 +159,33 @@ function App() {
   const [fanMessages, setFanMessages] = useState<any[]>([])
   const [generatingFanMessage, setGeneratingFanMessage] = useState(false)
 
+  // ---------------------------------------------------------------------------
+  // Initialise 5-stage pipeline scaffold (called before any agent run)
+  // ---------------------------------------------------------------------------
+  const initializeStages = useCallback((currentTelemetry: TelemetryEvent | null) => {
+    setOrchestrationStages([
+      {
+        id: 'telemetry_received',
+        name: 'Telemetry Received',
+        status: currentTelemetry ? 'complete' : 'running',
+        timestamp: new Date().toISOString(),
+        data: currentTelemetry ? {
+          vehicle_id:         currentTelemetry.vehicle.vehicle_id,
+          steering_vibration: currentTelemetry.vehicle.steering_vibration,
+          tire_wear:          currentTelemetry.vehicle.tire_wear_percent,
+          track_temperature:  currentTelemetry.track_environment.track_temperature,
+        } : {}
+      },
+      { id: 'safety_intelligence',     name: 'Safety Intelligence Agent',     status: 'pending', data: {} },
+      { id: 'strategy_recommendation', name: 'Strategy Recommendation Agent', status: 'pending', data: {} },
+      { id: 'governance_approval',     name: 'Governance Approval Agent',     status: 'pending', data: {} },
+      { id: 'fan_engagement',          name: 'Fan Engagement Agent',          status: 'pending', data: {} },
+    ])
+  }, [])
+
+  // ---------------------------------------------------------------------------
+  // WebSocket
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     const websocket = new WebSocket('ws://localhost:3001')
 
@@ -70,31 +196,33 @@ function App() {
     websocket.onmessage = (event) => {
       const data = JSON.parse(event.data)
 
+      // ── Raw telemetry stream ────────────────────────────────────────────────
       if (data.event === 'telemetry') {
-        const telemetryData = data.data
-        setTelemetry(telemetryData)
+        const td: TelemetryEvent = data.data
+        setTelemetry(td)
 
         setTelemetryHistory(prev => [
           ...prev.slice(-20),
           {
-            lap: telemetryData.lap,
-            risk: telemetryData.risk_analysis.risk_score,
-            tire: telemetryData.vehicle.tire_wear_percent,
-            temp: telemetryData.vehicle.engine_temperature
+            lap:  td.lap,
+            risk: td.risk_analysis.risk_score,
+            tire: td.vehicle.tire_wear_percent,
+            temp: td.vehicle.engine_temperature,
           }
         ])
 
+        // Keep the telemetry_received stage in sync
         setOrchestrationStages(prev => {
-          const stage = {
+          const stage: OrchestrationStage = {
             id: 'telemetry_received',
             name: 'Telemetry Received',
-            status: 'complete' as const,
+            status: 'complete',
             timestamp: new Date().toISOString(),
             data: {
-              vehicle_id: telemetryData.vehicle.vehicle_id,
-              steering_vibration: telemetryData.vehicle.steering_vibration,
-              tire_wear: telemetryData.vehicle.tire_wear_percent,
-              track_temperature: telemetryData.track_environment.track_temperature
+              vehicle_id:         td.vehicle.vehicle_id,
+              steering_vibration: td.vehicle.steering_vibration,
+              tire_wear:          td.vehicle.tire_wear_percent,
+              track_temperature:  td.track_environment.track_temperature,
             }
           }
 
@@ -105,36 +233,75 @@ function App() {
         })
       }
 
+      // ── Pipeline started (server is about to call agents) ──────────────────
+      // Initialise all 5 stage cards immediately so the user sees the pipeline
+      // scaffold before the agents finish running.
+      if (data.event === 'pipeline_start') {
+        setTelemetry(prev => {
+          initializeStages(prev)
+          return prev
+        })
+      }
+
+      // ── Full auto-analysis result (all agents finished) ────────────────────
+      // This is the PRIMARY handler for telemetry-triggered workflows.
+      // It drives the stage-card animation with real data from agent_chain.
+      if (data.event === 'auto_analysis') {
+        const result = data.data
+        setResponse(result)
+
+        const agentChain: any[] = result?.result?.agent_chain || []
+
+        // Make sure the pipeline scaffold exists before animating
+        setOrchestrationStages(prev => {
+          if (prev.length === 0) {
+            return [
+              { id: 'telemetry_received',      name: 'Telemetry Received',           status: 'complete', timestamp: new Date().toISOString(), data: {} },
+              { id: 'safety_intelligence',     name: 'Safety Intelligence Agent',    status: 'pending',  data: {} },
+              { id: 'strategy_recommendation', name: 'Strategy Recommendation Agent',status: 'pending',  data: {} },
+              { id: 'governance_approval',     name: 'Governance Approval Agent',    status: 'pending',  data: {} },
+              { id: 'fan_engagement',          name: 'Fan Engagement Agent',         status: 'pending',  data: {} },
+            ]
+          }
+          return prev
+        })
+
+        // Animate each stage card sequentially with real agent data
+        animatePipeline(agentChain, setOrchestrationStages)
+      }
+
+      // ── Fan messages (from approval or auto-generation) ────────────────────
       if (data.event === 'fan_messages') {
         const newMessages = data.data.messages.map((msg: any) => ({
           ...msg,
           timestamp: data.data.timestamp || new Date().toISOString(),
           status: 'published'
         }))
-
         setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
         setGeneratingFanMessage(false)
       }
 
+      // ── Approval decision (may include fan messages) ───────────────────────
       if (data.event === 'approval_decision') {
-        if (data.data.fan_messages) {
+        if (data.data.fan_messages?.length) {
           const newMessages = data.data.fan_messages.map((msg: any) => ({
             ...msg,
             timestamp: new Date().toISOString(),
             status: 'published'
           }))
-
           setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
         }
-
         setGeneratingFanMessage(false)
       }
     }
 
     setWs(websocket)
     return () => websocket.close()
-  }, [])
+  }, [initializeStages])
 
+  // ---------------------------------------------------------------------------
+  // Poll governance approvals every 5 s
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     const fetchApprovals = async () => {
       try {
@@ -151,117 +318,84 @@ function App() {
     return () => clearInterval(interval)
   }, [])
 
-  const initializeStages = () => {
-    setOrchestrationStages([
-      {
-        id: 'telemetry_received',
-        name: 'Telemetry Received',
-        status: telemetry ? 'complete' : 'running',
-        timestamp: new Date().toISOString(),
-        data: telemetry ? {
-          vehicle_id: telemetry.vehicle.vehicle_id,
-          steering_vibration: telemetry.vehicle.steering_vibration,
-          tire_wear: telemetry.vehicle.tire_wear_percent,
-          track_temperature: telemetry.track_environment.track_temperature
-        } : {}
-      },
-      { id: 'safety_intelligence', name: 'Safety Intelligence Agent', status: 'pending', data: {} },
-      { id: 'strategy_recommendation', name: 'Strategy Recommendation Agent', status: 'pending', data: {} },
-      { id: 'governance_approval', name: 'Governance Approval Agent', status: 'pending', data: {} },
-      { id: 'fan_engagement', name: 'Fan Engagement Agent', status: 'pending', data: {} }
-    ])
-  }
-
-  const updateStage = (id: string, patch: Partial<OrchestrationStage>) => {
-    setOrchestrationStages(prev =>
-      prev.map(stage => stage.id === id ? { ...stage, ...patch } : stage)
-    )
-  }
-
+  // ---------------------------------------------------------------------------
+  // Manual prompt submission
+  // ---------------------------------------------------------------------------
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setResponse(null)
-    initializeStages()
+
+    // Capture telemetry snapshot for closure
+    const currentTelemetry = telemetry
+    initializeStages(currentTelemetry)
 
     try {
-      setTimeout(() => {
-        updateStage('safety_intelligence', {
-          status: 'running',
-          timestamp: new Date().toISOString()
-        })
-      }, 400)
-
       const res = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          context: telemetry ? {
-            telemetryEvent: telemetry,
-            languages: ['en', 'it', 'es', 'hi']
-          } : {
-            languages: ['en', 'it', 'es', 'hi']
-          }
+          context: currentTelemetry
+            ? { telemetryEvent: currentTelemetry, languages: ['en', 'it', 'es', 'hi'] }
+            : { languages: ['en', 'it', 'es', 'hi'] }
         })
       })
 
       const data = await res.json()
       setResponse(data)
 
-      setTimeout(() => {
-        updateStage('safety_intelligence', {
-          status: 'complete',
-          timestamp: new Date().toISOString(),
-          data: {
-            risk_score: telemetry?.risk_analysis.risk_score ?? 91,
-            severity: telemetry?.risk_analysis.severity ?? 'critical',
-            anomaly_detected: 'Front-left tire vibration risk detected',
-            confidence_score: 0.94,
-            reasoning_summary: 'Steering vibration, tire degradation, and track temperature indicate elevated failure risk.'
-          }
-        })
-      }, 1000)
+      // Animate pipeline using real agent_chain from response
+      const agentChain: any[] = data?.result?.agent_chain || []
 
-      setTimeout(() => {
-        updateStage('strategy_recommendation', {
-          status: 'running',
-          timestamp: new Date().toISOString()
-        })
-      }, 1400)
+      if (agentChain.length > 0) {
+        // Real data path — drive animation from actual agent results
+        animatePipeline(agentChain, setOrchestrationStages)
+      } else {
+        // Fallback path — backend returned no agent_chain (e.g. generic query)
+        // Show deterministic stages based on available telemetry
+        const riskScore = currentTelemetry?.risk_analysis.risk_score ?? 91
+        const severity  = currentTelemetry?.risk_analysis.severity   ?? 'critical'
 
-      setTimeout(() => {
-        updateStage('strategy_recommendation', {
-          status: 'complete',
-          timestamp: new Date().toISOString(),
-          data: {
+        const fallbackMap: Record<string, any> = {
+          safety_intelligence: {
+            risk_score:        riskScore,
+            severity,
+            anomaly_detected:  'Front-left tire vibration risk detected',
+            confidence_score:  0.94,
+          },
+          strategy_recommendation: {
             recommended_pit_window: 'Lap 25–26',
-            recommended_tire: 'Medium compound',
-            residual_risk: 'Moderate',
-            strategy_reasoning: 'Immediate defensive pit stop recommended to reduce tire failure risk.'
-          }
-        })
-      }, 2000)
+            recommended_tire:       'Medium compound',
+            residual_risk:          'Moderate',
+            strategy_reasoning:     'Immediate defensive pit stop recommended.',
+          },
+          governance_approval: {
+            approval_state:    riskScore >= 80 ? 'awaiting_human_approval' : 'auto_approved',
+            approval_required: riskScore >= 80,
+            escalation_state:  riskScore >= 80 ? 'critical_review' : 'none',
+            approver_name:     riskScore >= 80 ? 'Awaiting race engineer approval' : 'System',
+          },
+        }
 
-      setTimeout(() => {
-        updateStage('governance_approval', {
-          status: 'running',
-          timestamp: new Date().toISOString()
-        })
-      }, 2400)
+        const stageIds = ['safety_intelligence', 'strategy_recommendation', 'governance_approval', 'fan_engagement']
+        stageIds.forEach((id, i) => {
+          setTimeout(() => {
+            setOrchestrationStages(prev =>
+              prev.map(s => s.id === id ? { ...s, status: 'running', timestamp: new Date().toISOString() } : s)
+            )
+          }, (i + 1) * 800)
 
-      setTimeout(() => {
-        updateStage('governance_approval', {
-          status: 'complete',
-          timestamp: new Date().toISOString(),
-          data: {
-            approval_state: telemetry && telemetry.risk_analysis.risk_score >= 80 ? 'awaiting_human_approval' : 'auto_approved',
-            approval_required: telemetry ? telemetry.risk_analysis.risk_score >= 80 : true,
-            escalation_state: telemetry && telemetry.risk_analysis.risk_score >= 80 ? 'critical_review' : 'none',
-            approver_name: telemetry && telemetry.risk_analysis.risk_score >= 80 ? 'Awaiting race engineer approval' : 'System'
-          }
+          setTimeout(() => {
+            setOrchestrationStages(prev =>
+              prev.map(s => s.id === id
+                ? { ...s, status: 'complete', timestamp: new Date().toISOString(), data: fallbackMap[id] || {} }
+                : s
+              )
+            )
+          }, (i + 1) * 800 + 600)
         })
-      }, 3000)
+      }
 
     } catch (error) {
       console.error('Error:', error)
@@ -274,6 +408,9 @@ function App() {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Simulator controls
+  // ---------------------------------------------------------------------------
   const toggleSimulator = async () => {
     try {
       if (isSimulatorRunning) {
@@ -296,6 +433,9 @@ function App() {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Approval handler
+  // ---------------------------------------------------------------------------
   const handleApproval = async (approvalId: string, action: string) => {
     try {
       if (action === 'approve') setGeneratingFanMessage(true)
@@ -326,9 +466,9 @@ function App() {
             timestamp: new Date().toISOString(),
             status: 'published'
           }))
-
           setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
         } else {
+          // Fallback fan messages when backend returns none
           const approval = pendingApprovals.find(a => a.approval_id === approvalId)
           const driverName =
             approval?.vehicle?.driver_name ||
@@ -397,16 +537,23 @@ function App() {
           setFanMessages(prev => [...fallbackMessages, ...prev].slice(0, 20))
         }
 
-        updateStage('fan_engagement', {
-          status: 'complete',
-          timestamp: new Date().toISOString(),
-          data: {
-            fan_narrative: 'Fan-safe race update generated and published.',
-            multilingual_status: 'EN, IT, ES',
-            telemetry_redaction: true,
-            publication_timestamp: new Date().toISOString()
-          }
-        })
+        // Mark fan engagement stage as complete in the pipeline
+        setOrchestrationStages(prev =>
+          prev.map(s => s.id === 'fan_engagement'
+            ? {
+                ...s,
+                status: 'complete',
+                timestamp: new Date().toISOString(),
+                data: {
+                  fan_narrative:         'Fan-safe race update generated and published.',
+                  multilingual_status:   'EN, IT, ES',
+                  telemetry_redaction:   true,
+                  publication_timestamp: new Date().toISOString()
+                }
+              }
+            : s
+          )
+        )
       }
 
       setGeneratingFanMessage(false)
@@ -416,6 +563,9 @@ function App() {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
   const getRiskColor = (score: number) => {
     if (score >= 80) return 'text-red-500'
     if (score >= 60) return 'text-orange-500'
@@ -423,6 +573,9 @@ function App() {
     return 'text-green-400'
   }
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">
       <div className="fixed inset-0 bg-gradient-to-br from-black via-gray-900 to-black opacity-90" />
@@ -430,6 +583,7 @@ function App() {
       <div className="fixed inset-0 bg-[linear-gradient(rgba(220,0,0,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(220,0,0,0.03)_1px,transparent_1px)] bg-[size:50px_50px]" />
 
       <div className="relative z-10 flex h-screen">
+        {/* ── Sidebar ───────────────────────────────────────────────────────── */}
         <aside className="w-72 border-r border-ferrari-red/20 bg-black/50 backdrop-blur-xl flex flex-col">
           <div className="p-6 border-b border-ferrari-red/20">
             <div className="flex items-center gap-3">
@@ -475,9 +629,9 @@ function App() {
             <div className="space-y-3">
               {[
                 { name: 'Safety Intelligence', icon: Shield, color: 'text-blue-400' },
-                { name: 'Strategy AI', icon: Target, color: 'text-purple-400' },
-                { name: 'Governance', icon: Eye, color: 'text-yellow-400' },
-                { name: 'Fan Engagement', icon: Users, color: 'text-green-400' }
+                { name: 'Strategy AI',         icon: Target, color: 'text-purple-400' },
+                { name: 'Governance',          icon: Eye,    color: 'text-yellow-400' },
+                { name: 'Fan Engagement',      icon: Users,  color: 'text-green-400' }
               ].map((agent) => (
                 <motion.div
                   whileHover={{ scale: 1.02 }}
@@ -489,13 +643,8 @@ function App() {
                   </div>
 
                   <div className="flex-1">
-                    <div className="text-sm font-semibold text-white">
-                      {agent.name}
-                    </div>
-
-                    <div className="text-[10px] uppercase tracking-[0.25em] text-gray-500">
-                      AI Agent Active
-                    </div>
+                    <div className="text-sm font-semibold text-white">{agent.name}</div>
+                    <div className="text-[10px] uppercase tracking-[0.25em] text-gray-500">AI Agent Active</div>
                   </div>
 
                   <div className="relative">
@@ -508,23 +657,11 @@ function App() {
 
             <div className="mt-8 rounded-3xl border border-ferrari-red/20 bg-gradient-to-br from-ferrari-red/10 via-black/40 to-black/80 p-5 shadow-[0_0_35px_rgba(220,0,0,0.15)]">
               <div className="mb-3 flex items-center justify-between">
-                <span className="text-[10px] uppercase tracking-[0.3em] text-gray-400">
-                  Active Driver
-                </span>
-
-                <span className="rounded-full bg-green-500/20 px-2 py-1 text-[10px] font-bold text-green-400">
-                  PUSH
-                </span>
+                <span className="text-[10px] uppercase tracking-[0.3em] text-gray-400">Active Driver</span>
+                <span className="rounded-full bg-green-500/20 px-2 py-1 text-[10px] font-bold text-green-400">PUSH</span>
               </div>
-
-              <div className="text-xl font-black tracking-wide text-white">
-                Charles Leclerc
-              </div>
-
-              <div className="mt-1 text-sm text-gray-500">
-                Ferrari SF-24
-              </div>
-
+              <div className="text-xl font-black tracking-wide text-white">Charles Leclerc</div>
+              <div className="mt-1 text-sm text-gray-500">Ferrari SF-24</div>
               <div className="mt-5 h-2 overflow-hidden rounded-full bg-black/50">
                 <motion.div
                   initial={{ width: 0 }}
@@ -533,7 +670,6 @@ function App() {
                   className="h-full rounded-full bg-gradient-to-r from-red-500 via-orange-400 to-yellow-300"
                 />
               </div>
-
               <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
                 <span>Attack Mode</span>
                 <span>74%</span>
@@ -542,15 +678,9 @@ function App() {
 
             <div className="mt-5 rounded-3xl border border-cyan-500/20 bg-cyan-500/5 p-5">
               <div className="mb-3 flex items-center justify-between">
-                <span className="text-[10px] uppercase tracking-[0.3em] text-cyan-300">
-                  AI Confidence
-                </span>
-
-                <span className="text-lg font-black text-cyan-400">
-                  94%
-                </span>
+                <span className="text-[10px] uppercase tracking-[0.3em] text-cyan-300">AI Confidence</span>
+                <span className="text-lg font-black text-cyan-400">94%</span>
               </div>
-
               <div className="h-2 overflow-hidden rounded-full bg-black/40">
                 <motion.div
                   initial={{ width: 0 }}
@@ -559,31 +689,19 @@ function App() {
                   className="h-full rounded-full bg-cyan-400"
                 />
               </div>
-
-              <div className="mt-3 text-xs text-gray-500">
-                Strategy recommendation confidence
-              </div>
+              <div className="mt-3 text-xs text-gray-500">Strategy recommendation confidence</div>
             </div>
 
             <div className="mt-5 rounded-3xl border border-yellow-500/20 bg-yellow-500/5 p-5">
-              <div className="mb-4 text-[10px] uppercase tracking-[0.3em] text-yellow-300">
-                Tire Compound
-              </div>
-
+              <div className="mb-4 text-[10px] uppercase tracking-[0.3em] text-yellow-300">Tire Compound</div>
               <div className="flex items-center gap-4">
                 <div className="relative flex h-12 w-12 items-center justify-center">
                   <div className="absolute inset-0 rounded-full border-4 border-yellow-400" />
                   <div className="absolute inset-2 rounded-full border border-yellow-300/30" />
                 </div>
-
                 <div>
-                  <div className="font-bold text-white">
-                    Medium
-                  </div>
-
-                  <div className="text-xs text-gray-500">
-                    Optimal Window: 6 laps
-                  </div>
+                  <div className="font-bold text-white">Medium</div>
+                  <div className="text-xs text-gray-500">Optimal Window: 6 laps</div>
                 </div>
               </div>
             </div>
@@ -591,12 +709,8 @@ function App() {
             <div className="mt-5 rounded-3xl border border-green-500/20 bg-gradient-to-br from-green-500/10 to-black/40 p-5">
               <div className="mb-4 flex items-center gap-2">
                 <Radio className="h-4 w-4 animate-pulse text-green-400" />
-
-                <span className="text-[10px] uppercase tracking-[0.3em] text-green-300">
-                  Pit Wall Radio
-                </span>
+                <span className="text-[10px] uppercase tracking-[0.3em] text-green-300">Pit Wall Radio</span>
               </div>
-
               <div className="space-y-3 text-xs text-gray-300">
                 <motion.div
                   initial={{ opacity: 0.4 }}
@@ -604,21 +718,43 @@ function App() {
                   transition={{ repeat: Infinity, duration: 1.4 }}
                   className="rounded-xl border border-white/5 bg-black/30 px-3 py-2"
                 >
-                  “Push now, push now.”
+                  "Push now, push now."
                 </motion.div>
-
-                <div className="rounded-xl border border-white/5 bg-black/30 px-3 py-2">
-                  “Box this lap.”
-                </div>
-
-                <div className="rounded-xl border border-white/5 bg-black/30 px-3 py-2">
-                  “Tire degradation increasing.”
-                </div>
+                <div className="rounded-xl border border-white/5 bg-black/30 px-3 py-2">"Box this lap."</div>
+                <div className="rounded-xl border border-white/5 bg-black/30 px-3 py-2">"Tire degradation increasing."</div>
               </div>
             </div>
           </div>
+          {/* IBM Partnership Footer */}
+<div className="mt-auto p-5 border-t border-cyan-500/10">
+  <div className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/30 to-blue-950/10 p-4 backdrop-blur-xl shadow-[0_0_30px_rgba(0,120,255,0.08)]">
+
+    <div className="flex items-center justify-center mb-3">
+      <img
+        src={ibmLogo}
+        alt="IBM Logo"
+        className="h-8 object-contain opacity-90"
+      />
+    </div>
+
+    <div className="text-center">
+      <p className="text-[10px] uppercase tracking-[0.3em] text-cyan-400/70">
+        Powered By
+      </p>
+
+      <h3 className="mt-1 text-sm font-black text-white tracking-wide">
+        IBM watsonx
+      </h3>
+
+      <p className="mt-1 text-xs text-gray-500 leading-relaxed">
+        AI Orchestration & Enterprise Intelligence Platform
+      </p>
+    </div>
+  </div>
+</div>
         </aside>
 
+        {/* ── Main content ──────────────────────────────────────────────────── */}
         <main className="flex-1 flex flex-col overflow-hidden">
           <header className="border-b border-ferrari-red/20 bg-black/30 backdrop-blur-xl">
             <div className="px-8 py-4 flex items-center justify-between">
@@ -650,6 +786,7 @@ function App() {
           </header>
 
           <div className="flex-1 overflow-auto p-8 space-y-6">
+            {/* AI Command Center */}
             <section className="glass-panel p-8 rounded-2xl border border-ferrari-red/20">
               <div className="flex items-center gap-3 mb-6">
                 <Brain className="w-6 h-6 text-ferrari-red" />
@@ -677,11 +814,9 @@ function App() {
                   <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
                     <div className="absolute inset-0 bg-gradient-to-r from-white/10 via-transparent to-white/10 animate-pulse" />
                   </div>
-
                   <div className="absolute inset-0 overflow-hidden">
                     <div className="absolute top-0 -left-[120%] h-full w-[60%] rotate-12 bg-white/10 blur-2xl transition-all duration-1000 group-hover:left-[140%]" />
                   </div>
-
                   <div className="relative z-10 flex items-center justify-center gap-3">
                     {loading ? (
                       <>
@@ -695,7 +830,6 @@ function App() {
                       </>
                     )}
                   </div>
-
                   <div className="absolute bottom-0 left-0 h-[2px] w-full bg-gradient-to-r from-transparent via-white/60 to-transparent opacity-60" />
                 </button>
 
@@ -721,6 +855,7 @@ function App() {
               </form>
             </section>
 
+            {/* Race Track Visualization */}
             <section className="glass-panel rounded-2xl border border-ferrari-red/20 overflow-hidden">
               <RaceTrackVisualization
                 telemetryData={telemetry}
@@ -729,6 +864,7 @@ function App() {
             </section>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Live Telemetry */}
               <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-xl font-bold flex items-center gap-3">
@@ -757,10 +893,10 @@ function App() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
-                      <Metric label="Tire Wear" value={`${telemetry.vehicle.tire_wear_percent.toFixed(1)}%`} color="text-orange-400" sub={telemetry.vehicle.tire_compound} />
-                      <Metric label="Vibration" value={telemetry.vehicle.steering_vibration.toFixed(1)} color="text-red-400" sub="steering" />
+                      <Metric label="Tire Wear"   value={`${telemetry.vehicle.tire_wear_percent.toFixed(1)}%`} color="text-orange-400" sub={telemetry.vehicle.tire_compound} />
+                      <Metric label="Vibration"   value={telemetry.vehicle.steering_vibration.toFixed(1)}      color="text-red-400"    sub="steering" />
                       <Metric label="Engine Temp" value={`${telemetry.vehicle.engine_temperature.toFixed(0)}°C`} color="text-yellow-400" />
-                      <Metric label="Speed" value={telemetry.vehicle.speed_kmh.toFixed(0)} color="text-cyan-400" sub="km/h" />
+                      <Metric label="Speed"       value={telemetry.vehicle.speed_kmh.toFixed(0)}               color="text-cyan-400"   sub="km/h" />
                     </div>
 
                     <div className="h-32">
@@ -768,7 +904,7 @@ function App() {
                         <AreaChart data={telemetryHistory}>
                           <defs>
                             <linearGradient id="riskGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#DC0000" stopOpacity={0.8} />
+                              <stop offset="5%"  stopColor="#DC0000" stopOpacity={0.8} />
                               <stop offset="95%" stopColor="#DC0000" stopOpacity={0} />
                             </linearGradient>
                           </defs>
@@ -785,6 +921,7 @@ function App() {
                 )}
               </section>
 
+              {/* AI Orchestration Pipeline */}
               <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
                 <h3 className="text-xl font-bold flex items-center gap-3 mb-6">
                   <Sparkles className="w-5 h-5 text-purple-400" />
@@ -792,14 +929,21 @@ function App() {
                 </h3>
 
                 <div className="space-y-4 max-h-[580px] overflow-y-auto pr-2">
-                  {orchestrationStages.length > 0 ? orchestrationStages.map(stage => (
-                    <StageCard key={stage.id} stage={stage} getRiskColor={getRiskColor} />
-                  )) : (
-                    <EmptyState icon={<Brain className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="Execute an AI workflow to see the pipeline" />
-                  )}
+                  {orchestrationStages.length > 0
+                    ? orchestrationStages.map(stage => (
+                        <StageCard key={stage.id} stage={stage} getRiskColor={getRiskColor} />
+                      ))
+                    : (
+                        <EmptyState
+                          icon={<Brain className="w-12 h-12 mx-auto mb-4 opacity-50" />}
+                          text="Execute an AI workflow to see the pipeline"
+                        />
+                      )
+                  }
                 </div>
               </section>
 
+              {/* Governance Console */}
               <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
                 <div className="flex items-center gap-3 mb-6">
                   <Shield className="w-5 h-5 text-yellow-400" />
@@ -812,31 +956,43 @@ function App() {
                 </div>
 
                 <div className="space-y-3">
-                  {pendingApprovals.length > 0 ? pendingApprovals.map(approval => (
-                    <div key={approval.approval_id} className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <div className="text-sm font-semibold mb-1">Risk Score: {approval.risk_score}</div>
-                          <div className="text-xs text-gray-400">{approval.severity} severity</div>
+                  {pendingApprovals.length > 0
+                    ? pendingApprovals.map(approval => (
+                        <div key={approval.approval_id} className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                          <div className="flex items-start justify-between mb-3">
+                            <div>
+                              <div className="text-sm font-semibold mb-1">Risk Score: {approval.risk_score}</div>
+                              <div className="text-xs text-gray-400">{approval.severity} severity</div>
+                            </div>
+                            <AlertTriangle className="w-5 h-5 text-yellow-400" />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleApproval(approval.approval_id, 'approve')}
+                              className="flex-1 px-3 py-2 bg-green-500/20 text-green-400 rounded-lg text-sm font-semibold"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleApproval(approval.approval_id, 'reject')}
+                              className="flex-1 px-3 py-2 bg-red-500/20 text-red-400 rounded-lg text-sm font-semibold"
+                            >
+                              Reject
+                            </button>
+                          </div>
                         </div>
-                        <AlertTriangle className="w-5 h-5 text-yellow-400" />
-                      </div>
-
-                      <div className="flex gap-2">
-                        <button onClick={() => handleApproval(approval.approval_id, 'approve')} className="flex-1 px-3 py-2 bg-green-500/20 text-green-400 rounded-lg text-sm font-semibold">
-                          Approve
-                        </button>
-                        <button onClick={() => handleApproval(approval.approval_id, 'reject')} className="flex-1 px-3 py-2 bg-red-500/20 text-red-400 rounded-lg text-sm font-semibold">
-                          Reject
-                        </button>
-                      </div>
-                    </div>
-                  )) : (
-                    <EmptyState icon={<CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="No pending approvals" />
-                  )}
+                      ))
+                    : (
+                        <EmptyState
+                          icon={<CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />}
+                          text="No pending approvals"
+                        />
+                      )
+                  }
                 </div>
               </section>
 
+              {/* Fan Intelligence Hub */}
               <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
                 <h3 className="text-xl font-bold flex items-center gap-3 mb-6">
                   <Users className="w-5 h-5 text-green-400" />
@@ -850,39 +1006,44 @@ function App() {
                 )}
 
                 <div className="space-y-3 max-h-[580px] overflow-y-auto pr-2">
-                  {fanMessages.length > 0 ? fanMessages.map(msg => (
-                    <motion.div
-                      key={msg.message_id}
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg"
-                    >
-                      <div className="flex items-center justify-between gap-3 mb-2">
-                        <div className="min-w-0">
-                          <div className="text-sm font-bold text-white truncate">
-                            {msg.message_title || 'Fan Race Update'}
+                  {fanMessages.length > 0
+                    ? fanMessages.map(msg => (
+                        <motion.div
+                          key={msg.message_id}
+                          initial={{ opacity: 0, y: 12 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg"
+                        >
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <div className="min-w-0">
+                              <div className="text-sm font-bold text-white truncate">
+                                {msg.message_title || 'Fan Race Update'}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {msg.emotional_tone || 'strategic'}
+                              </div>
+                            </div>
+                            <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-300 border border-red-500/20">
+                              {(msg.language || 'en').toUpperCase()}
+                            </span>
                           </div>
-                          <div className="text-xs text-gray-500">
-                            {msg.emotional_tone || 'strategic'}
-                          </div>
-                        </div>
-
-                        <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-300 border border-red-500/20">
-                          {(msg.language || 'en').toUpperCase()}
-                        </span>
-                      </div>
-
-                      <p className="text-sm text-gray-300 leading-relaxed">
-                        {msg.message_content}
-                      </p>
-                    </motion.div>
-                  )) : (
-                    <EmptyState icon={<Users className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="No fan messages generated" />
-                  )}
+                          <p className="text-sm text-gray-300 leading-relaxed">
+                            {msg.message_content}
+                          </p>
+                        </motion.div>
+                      ))
+                    : (
+                        <EmptyState
+                          icon={<Users className="w-12 h-12 mx-auto mb-4 opacity-50" />}
+                          text="No fan messages generated"
+                        />
+                      )
+                  }
                 </div>
               </section>
             </div>
 
+            {/* Raw workflow response */}
             <AnimatePresence>
               {response && (
                 <motion.section
@@ -905,6 +1066,8 @@ function App() {
   )
 }
 
+// ── Sub-components ───────────────────────────────────────────────────────────
+
 function Metric({ label, value, color, sub }: { label: string; value: string; color: string; sub?: string }) {
   return (
     <div className="p-3 bg-black/50 rounded-lg border border-gray-800">
@@ -926,9 +1089,15 @@ function EmptyState({ icon, text }: { icon: React.ReactNode; text: string }) {
   )
 }
 
-function StageCard({ stage, getRiskColor }: { stage: OrchestrationStage; getRiskColor: (score: number) => string }) {
+function StageCard({
+  stage,
+  getRiskColor,
+}: {
+  stage: OrchestrationStage
+  getRiskColor: (score: number) => string
+}) {
   return (
-    <div className={`p-4 rounded-xl border ${
+    <div className={`p-4 rounded-xl border transition-all duration-500 ${
       stage.status === 'complete'
         ? 'bg-green-500/5 border-green-500/30'
         : stage.status === 'running'
@@ -940,12 +1109,14 @@ function StageCard({ stage, getRiskColor }: { stage: OrchestrationStage; getRisk
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
           {stage.status === 'complete' && <CheckCircle className="w-5 h-5 text-green-400" />}
-          {stage.status === 'running' && <Sparkles className="w-5 h-5 text-ferrari-red animate-spin" />}
-          {stage.status === 'pending' && <Clock className="w-5 h-5 text-gray-600" />}
-          {stage.status === 'error' && <AlertTriangle className="w-5 h-5 text-red-400" />}
+          {stage.status === 'running'  && <Sparkles   className="w-5 h-5 text-ferrari-red animate-spin" />}
+          {stage.status === 'pending'  && <Clock      className="w-5 h-5 text-gray-600" />}
+          {stage.status === 'error'    && <AlertTriangle className="w-5 h-5 text-red-400" />}
           <div>
             <div className="text-sm font-bold">{stage.name}</div>
-            {stage.timestamp && <div className="text-xs text-gray-500">{new Date(stage.timestamp).toLocaleTimeString()}</div>}
+            {stage.timestamp && (
+              <div className="text-xs text-gray-500">{new Date(stage.timestamp).toLocaleTimeString()}</div>
+            )}
           </div>
         </div>
         <ChevronRight className="w-4 h-4 text-gray-600" />

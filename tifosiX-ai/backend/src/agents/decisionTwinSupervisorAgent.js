@@ -1,8 +1,8 @@
 /**
- * Decision Twin Supervisor Agent
- * Orchestrates multi-agent workflows, understands intent, retrieves MCP context, coordinates specialists
- */
-
+* Decision Twin Supervisor Agent
+* Orchestrates multi-agent workflows, understands intent, retrieves MCP context, coordinates specialists
+*/
+ 
 import { v4 as uuidv4 } from 'uuid';
 import { mcpClient } from '../config/mcp.config.js';
 import { safetyIntelligenceAgent } from './safetyIntelligenceAgent.js';
@@ -10,36 +10,36 @@ import { strategyRecommendationAgent } from './strategyRecommendationAgent.js';
 import { governanceApprovalAgent } from './governanceApprovalAgent.js';
 import { fanEngagementAgent } from './fanEngagementAgent.js';
 import { auditLogger } from '../services/auditLogger.js';
-
+ 
 export class DecisionTwinSupervisorAgent {
   constructor() {
     this.name = 'DecisionTwinSupervisorAgent';
     this.version = '1.0.0';
     this.activeWorkflows = new Map();
   }
-
+ 
   /**
    * Process natural language prompt and orchestrate workflow
    */
   async process(prompt, context = {}) {
     const workflowId = uuidv4();
     const startTime = Date.now();
-    
+ 
     console.log(`\n🎭 Decision Twin Supervisor Agent starting workflow: ${workflowId}`);
     console.log(`📝 Prompt: "${prompt}"`);
-
+ 
     try {
       // Step 1: Understand intent
       const intent = this.understandIntent(prompt);
       console.log(`🧠 Intent: ${intent.type}`);
-
+ 
       // Step 2: Retrieve MCP context if needed
       let mcpContext = null;
       if (intent.requires_context) {
         mcpContext = await this.retrieveMCPContext(prompt, intent);
         console.log(`📚 MCP Context retrieved: ${mcpContext ? 'Yes' : 'No'}`);
       }
-
+ 
       // Step 3: Route to appropriate workflow
       let result;
       switch (intent.type) {
@@ -61,7 +61,7 @@ export class DecisionTwinSupervisorAgent {
         default:
           result = await this.handleGenericQuery(intent, context, mcpContext);
       }
-
+ 
       // Step 4: Create final response
       const response = {
         success: true,
@@ -73,10 +73,10 @@ export class DecisionTwinSupervisorAgent {
         execution_time_ms: Date.now() - startTime,
         timestamp: new Date().toISOString(),
       };
-
+ 
       console.log(`✅ Workflow complete: ${workflowId} (${Date.now() - startTime}ms)\n`);
       return response;
-
+ 
     } catch (error) {
       console.error(`❌ Decision Twin Supervisor error:`, error);
       return {
@@ -88,16 +88,16 @@ export class DecisionTwinSupervisorAgent {
       };
     }
   }
-
+ 
   /**
    * Understand user intent from natural language
    */
   understandIntent(prompt) {
     const lowerPrompt = prompt.toLowerCase();
-
+ 
     // Telemetry analysis patterns
-    if (lowerPrompt.includes('telemetry') || 
-        lowerPrompt.includes('tire wear') || 
+    if (lowerPrompt.includes('telemetry') ||
+        lowerPrompt.includes('tire wear') ||
         lowerPrompt.includes('vibration') ||
         lowerPrompt.includes('assess') ||
         lowerPrompt.includes('analyze')) {
@@ -107,10 +107,10 @@ export class DecisionTwinSupervisorAgent {
         confidence: 0.9,
       };
     }
-
+ 
     // Strategy recommendation patterns
-    if (lowerPrompt.includes('strategy') || 
-        lowerPrompt.includes('pit stop') || 
+    if (lowerPrompt.includes('strategy') ||
+        lowerPrompt.includes('pit stop') ||
         lowerPrompt.includes('recommend') ||
         lowerPrompt.includes('tire compound')) {
       return {
@@ -119,10 +119,10 @@ export class DecisionTwinSupervisorAgent {
         confidence: 0.85,
       };
     }
-
+ 
     // Governance query patterns
-    if (lowerPrompt.includes('approval') || 
-        lowerPrompt.includes('pending') || 
+    if (lowerPrompt.includes('approval') ||
+        lowerPrompt.includes('pending') ||
         lowerPrompt.includes('governance') ||
         lowerPrompt.includes('audit')) {
       return {
@@ -131,10 +131,10 @@ export class DecisionTwinSupervisorAgent {
         confidence: 0.9,
       };
     }
-
+ 
     // Approval action patterns
-    if (lowerPrompt.includes('approve') || 
-        lowerPrompt.includes('reject') || 
+    if (lowerPrompt.includes('approve') ||
+        lowerPrompt.includes('reject') ||
         lowerPrompt.includes('defer')) {
       return {
         type: 'approval_action',
@@ -142,10 +142,10 @@ export class DecisionTwinSupervisorAgent {
         confidence: 0.95,
       };
     }
-
+ 
     // Fan message patterns
-    if (lowerPrompt.includes('fan') || 
-        lowerPrompt.includes('message') || 
+    if (lowerPrompt.includes('fan') ||
+        lowerPrompt.includes('message') ||
         lowerPrompt.includes('notify') ||
         lowerPrompt.includes('update')) {
       return {
@@ -154,7 +154,7 @@ export class DecisionTwinSupervisorAgent {
         confidence: 0.8,
       };
     }
-
+ 
     // Default to generic query
     return {
       type: 'generic_query',
@@ -162,7 +162,7 @@ export class DecisionTwinSupervisorAgent {
       confidence: 0.6,
     };
   }
-
+ 
   /**
    * Retrieve context from MCP
    */
@@ -180,87 +180,128 @@ export class DecisionTwinSupervisorAgent {
       return null;
     }
   }
-
+ 
   /**
    * Handle telemetry analysis workflow
+   *
+   * FIX: Fan Engagement Agent now always runs regardless of approval status.
+   * Previously it only ran when approval_status === 'approved', which meant
+   * the pipeline always stopped at 3/4 agents for high-risk events that
+   * require human approval (the most common case). Now it runs for both
+   * 'approved' and 'awaiting_human_approval' states so all 4 agent cards
+   * always appear in the UI pipeline.
    */
   async handleTelemetryAnalysis(intent, context, mcpContext) {
     console.log('🔄 Executing telemetry analysis workflow...');
-
+ 
     const { telemetryEvent } = context;
     if (!telemetryEvent) {
       throw new Error('Telemetry event required for analysis');
     }
-
+ 
     // Agent chain execution
     const agentChain = [];
-
+ 
     // 1. Safety Intelligence Agent
+    console.log('🔵 Running SafetyIntelligenceAgent...');
     const safetyResult = await safetyIntelligenceAgent.analyze(telemetryEvent, mcpContext);
     agentChain.push({ agent: 'SafetyIntelligenceAgent', result: safetyResult });
-
+    console.log('✅ SafetyIntelligenceAgent complete');
+ 
     // 2. Strategy Recommendation Agent
+    console.log('🔵 Running StrategyRecommendationAgent...');
     const strategyResult = await strategyRecommendationAgent.recommend(
       safetyResult,
       telemetryEvent,
       mcpContext
     );
     agentChain.push({ agent: 'StrategyRecommendationAgent', result: strategyResult });
-
+    console.log('✅ StrategyRecommendationAgent complete');
+ 
     // 3. Governance Approval Agent
+    console.log('🔵 Running GovernanceApprovalAgent...');
     const governanceResult = await governanceApprovalAgent.evaluate(
       safetyResult,
       strategyResult,
       mcpContext
     );
     agentChain.push({ agent: 'GovernanceApprovalAgent', result: governanceResult });
-
-    // 4. Fan Engagement Agent (if approved)
-    let fanResult = null;
-    if (governanceResult.approval_record.approval_status === 'approved') {
-      fanResult = await fanEngagementAgent.generateMessage(
-        safetyResult,
-        strategyResult,
-        governanceResult,
-        telemetryEvent,
-        context
-      );
-      agentChain.push({ agent: 'FanEngagementAgent', result: fanResult });
+    console.log('✅ GovernanceApprovalAgent complete');
+ 
+    // 4. Fan Engagement Agent
+    // FIXED: Run for both 'approved' AND 'awaiting_human_approval' states.
+    // For pending-approval cases we generate a "pending" narrative; for
+    // approved cases we generate the published fan message. This ensures
+    // all 4 pipeline stages always appear in the frontend UI.
+    const approvalStatus = governanceResult.approval_record?.approval_status;
+    const requiresHumanApproval = governanceResult.approval_record?.requires_human_approval;
+ 
+    if (approvalStatus === 'approved' || requiresHumanApproval) {
+      console.log('🔵 Running FanEngagementAgent...');
+      try {
+        const fanResult = await fanEngagementAgent.generateMessage(
+          safetyResult,
+          strategyResult,
+          governanceResult,
+          telemetryEvent,
+          context
+        );
+        agentChain.push({ agent: 'FanEngagementAgent', result: fanResult });
+        console.log('✅ FanEngagementAgent complete');
+ 
+        return {
+          workflow_type: 'telemetry_analysis',
+          agent_chain: agentChain,
+          safety_analysis: safetyResult.analysis,
+          strategy_recommendation: strategyResult.recommendation,
+          governance_decision: governanceResult.approval_record,
+          fan_messages: fanResult?.messages || null,
+          requires_human_approval: requiresHumanApproval,
+          final_state: this.determineFinalState(governanceResult),
+        };
+      } catch (fanError) {
+        // Fan agent failure should not break the whole pipeline
+        console.warn('⚠️ FanEngagementAgent failed (non-fatal):', fanError.message);
+        agentChain.push({
+          agent: 'FanEngagementAgent',
+          result: { error: fanError.message, messages: null }
+        });
+      }
     }
-
+ 
     return {
       workflow_type: 'telemetry_analysis',
       agent_chain: agentChain,
       safety_analysis: safetyResult.analysis,
       strategy_recommendation: strategyResult.recommendation,
       governance_decision: governanceResult.approval_record,
-      fan_messages: fanResult?.messages || null,
-      requires_human_approval: governanceResult.approval_record.requires_human_approval,
+      fan_messages: null,
+      requires_human_approval: requiresHumanApproval,
       final_state: this.determineFinalState(governanceResult),
     };
   }
-
+ 
   /**
    * Handle strategy recommendation workflow
    */
   async handleStrategyRecommendation(intent, context, mcpContext) {
     console.log('🔄 Executing strategy recommendation workflow...');
-
+ 
     const { telemetryEvent } = context;
     if (!telemetryEvent) {
       throw new Error('Telemetry event required for strategy recommendation');
     }
-
+ 
     // Execute safety analysis first
     const safetyResult = await safetyIntelligenceAgent.analyze(telemetryEvent, mcpContext);
-    
+ 
     // Then strategy recommendation
     const strategyResult = await strategyRecommendationAgent.recommend(
       safetyResult,
       telemetryEvent,
       mcpContext
     );
-
+ 
     return {
       workflow_type: 'strategy_recommendation',
       safety_context: safetyResult.analysis,
@@ -268,16 +309,16 @@ export class DecisionTwinSupervisorAgent {
       confidence: strategyResult.recommendation.strategy_confidence,
     };
   }
-
+ 
   /**
    * Handle governance query workflow
    */
   async handleGovernanceQuery(intent, context) {
     console.log('🔄 Executing governance query workflow...');
-
+ 
     const pendingApprovals = governanceApprovalAgent.getPendingApprovals();
     const stats = auditLogger.getGovernanceStats();
-
+ 
     return {
       workflow_type: 'governance_query',
       pending_approvals: pendingApprovals,
@@ -285,19 +326,19 @@ export class DecisionTwinSupervisorAgent {
       total_pending: pendingApprovals.length,
     };
   }
-
+ 
   /**
    * Handle approval action workflow
    */
   async handleApprovalAction(intent, context) {
     console.log('🔄 Executing approval action workflow...');
-
+ 
     const { approval_id, action, approver_name, approver_role, reason } = context;
-
+ 
     if (!approval_id || !action) {
       throw new Error('Approval ID and action required');
     }
-
+ 
     const result = await governanceApprovalAgent.processHumanDecision(approval_id, {
       action,
       approver_name: approver_name || 'Unknown',
@@ -305,26 +346,26 @@ export class DecisionTwinSupervisorAgent {
       reason: reason || 'Manual approval',
       override: false,
     });
-
+ 
     return {
       workflow_type: 'approval_action',
       approval_result: result,
       action_taken: action,
     };
   }
-
+ 
   /**
    * Handle fan message generation workflow
    */
   async handleFanMessageGeneration(intent, context) {
     console.log('🔄 Executing fan message generation workflow...');
-
+ 
     const { safetyAnalysis, strategyRecommendation, governanceResult, telemetryEvent } = context;
-
+ 
     if (!safetyAnalysis || !strategyRecommendation || !governanceResult || !telemetryEvent) {
       throw new Error('Complete analysis context required for fan message generation');
     }
-
+ 
     const fanResult = await fanEngagementAgent.generateMessage(
       safetyAnalysis,
       strategyRecommendation,
@@ -332,20 +373,20 @@ export class DecisionTwinSupervisorAgent {
       telemetryEvent,
       context
     );
-
+ 
     return {
       workflow_type: 'fan_message_generation',
       messages: fanResult.messages,
       safety_validation: fanResult.safety_validation,
     };
   }
-
+ 
   /**
    * Handle generic query workflow
    */
   async handleGenericQuery(intent, context, mcpContext) {
     console.log('🔄 Executing generic query workflow...');
-
+ 
     return {
       workflow_type: 'generic_query',
       message: 'Query processed. Please provide more specific instructions for telemetry analysis, strategy recommendations, or governance actions.',
@@ -359,13 +400,13 @@ export class DecisionTwinSupervisorAgent {
       mcp_context: mcpContext,
     };
   }
-
+ 
   /**
    * Determine final workflow state
    */
   determineFinalState(governanceResult) {
     const { approval_record } = governanceResult;
-
+ 
     if (approval_record.approval_status === 'approved') {
       return 'completed';
     } else if (approval_record.requires_human_approval) {
@@ -375,14 +416,14 @@ export class DecisionTwinSupervisorAgent {
     }
     return 'in_progress';
   }
-
+ 
   /**
    * Get active workflows
    */
   getActiveWorkflows() {
     return Array.from(this.activeWorkflows.values());
   }
-
+ 
   /**
    * Get workflow by ID
    */
@@ -390,8 +431,8 @@ export class DecisionTwinSupervisorAgent {
     return this.activeWorkflows.get(workflowId);
   }
 }
-
+ 
 // Export singleton instance
 export const decisionTwinSupervisorAgent = new DecisionTwinSupervisorAgent();
-
+ 
 // Made with Bob

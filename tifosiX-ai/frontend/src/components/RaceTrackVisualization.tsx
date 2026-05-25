@@ -1,4 +1,4 @@
-import ferrariLogo from '../assets/ferrari-logo.png'
+import ferrariLogo from '../assets/LogoTifosix-ai.png'
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -50,6 +50,13 @@ const TEAM_COLORS: Record<string, string> = {
   'Alfa Romeo': '#900000',
   Haas: '#FFFFFF',
   AlphaTauri: '#2B4562'
+}
+const DRIVER_GIFS: Record<string, string> = {
+  'Charles Leclerc': '/charles-leclerc.gif',
+  'Carlos Sainz': '/carlos-sainz.gif',
+  'Lewis Hamilton': '/lewis-hamilton.gif',
+  'Max Verstappen': '/max-verstappen.gif',
+  'Lando Norris': '/lando-norris.gif'
 }
 
 const CIRCUIT_PATH = `
@@ -142,28 +149,59 @@ export default function RaceTrackVisualization({
     if (!telemetryData?.vehicle) return
     setDrivers(prev => {
       const updated = prev.map(driver => {
-        if (driver.id !== telemetryData.vehicle.vehicle_id) return driver
-        let newState: Driver['state'] = 'normal'
-        if (telemetryData.risk_analysis?.risk_score >= 80) newState = 'high_risk'
-        const strategyStage = orchestrationStages.find(s => s.name === 'Strategy Recommendation' && s.status === 'complete')
-        if (strategyStage?.data?.recommended_pit_window) newState = 'pit_incoming'
-        const governanceStage = orchestrationStages.find(s => s.name === 'Governance Approval' && s.data?.escalation_state === 'escalated')
-        if (governanceStage) newState = 'governance_escalation'
-        return {
-          ...driver,
-          riskScore: telemetryData.risk_analysis?.risk_score ?? driver.riskScore,
-          tireWear: telemetryData.vehicle.tire_wear_percent ?? driver.tireWear,
-          speed: telemetryData.vehicle.speed_kmh ?? driver.speed,
-          lap: telemetryData.lap ?? driver.lap,
-          tireCompound: telemetryData.vehicle.tire_compound ?? driver.tireCompound,
-          engineTemp: telemetryData.vehicle.engine_temperature ?? driver.engineTemp,
-          steeringVibration: telemetryData.vehicle.steering_vibration ?? driver.steeringVibration,
-          state: newState,
-          strategyRecommendation: strategyStage?.data?.strategy_reasoning,
-          reasoningSummary: orchestrationStages.find(s => s.name === 'Safety Intelligence')?.data?.reasoning_summary,
-          governanceState: governanceStage?.data?.approval_state
-        }
-      })
+  let newState: Driver['state'] = 'normal'
+
+  if (driver.id === telemetryData.vehicle.vehicle_id) {
+    if (telemetryData.risk_analysis?.risk_score >= 80) {
+      newState = 'high_risk'
+    }
+
+    const strategyStage = orchestrationStages.find(
+      s => s.name === 'Strategy Recommendation' && s.status === 'complete'
+    )
+
+    if (strategyStage?.data?.recommended_pit_window) {
+      newState = 'pit_incoming'
+    }
+
+    return {
+      ...driver,
+      riskScore: telemetryData.risk_analysis?.risk_score ?? driver.riskScore,
+      tireWear: telemetryData.vehicle.tire_wear_percent ?? driver.tireWear,
+      speed: telemetryData.vehicle.speed_kmh ?? driver.speed,
+      lap: telemetryData.lap ?? driver.lap,
+      tireCompound: telemetryData.vehicle.tire_compound ?? driver.tireCompound,
+      engineTemp: telemetryData.vehicle.engine_temperature ?? driver.engineTemp,
+      steeringVibration: telemetryData.vehicle.steering_vibration ?? driver.steeringVibration,
+      state: newState
+    }
+  }
+
+  // Animate ALL OTHER DRIVERS TOO
+  return {
+    ...driver,
+    speed: Math.max(
+      275,
+      Math.min(
+        316,
+        driver.speed + (Math.random() * 6 - 3)
+      )
+    ),
+    tireWear: Math.min(
+      100,
+      driver.tireWear + Math.random() * 0.4
+    ),
+    riskScore: Number(
+  Math.max(
+    5,
+    Math.min(
+      100,
+      driver.riskScore + (Math.random() * 4 - 2)
+    )
+  ).toFixed(0)
+)
+  }
+})
       return recalculatePositions(updated)
     })
     setCurrentLap(telemetryData.lap || currentLap)
@@ -229,14 +267,43 @@ export default function RaceTrackVisualization({
         <div className="flex items-center justify-between rounded-2xl border border-red-500/30 bg-black/70 px-6 py-4 backdrop-blur-xl">
           <div className="flex items-center gap-4">
             {/* Ferrari shield SVG logo placeholder */}
-<div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-red-500/30 bg-black/20 p-2 shadow-[0_0_25px_rgba(220,0,0,0.35)]">
+<div
+  className="
+    relative
+    flex
+    h-32
+    w-32
+    shrink-0
+    items-center
+    justify-center
+    overflow-hidden
+    rounded-[28px]
+    border
+    border-red-500/20
+    bg-gradient-to-br
+    from-[#170000]
+    via-[#090000]
+    to-black
+  "
+  style={{
+    boxShadow:
+      '0 0 45px rgba(220,0,0,0.35), inset 0 0 25px rgba(255,0,0,0.10)'
+  }}
+>
+  <div className="absolute inset-0 bg-[radial-gradient(circle,rgba(255,0,0,0.15),transparent_72%)]" />
+
   <img
-    src="data:image/png;base64,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"
+    src={ferrariLogo}
     alt="Ferrari Logo"
-    className="h-full w-full object-contain drop-shadow-[0_0_8px_rgba(220,0,0,0.6)]"
-    onError={(e) => {
-      e.currentTarget.style.display = 'none'
-    }}
+    className="
+      relative
+      z-10
+      h-[115%]
+      w-[115%]
+      object-contain
+      scale-[1.65]
+      drop-shadow-[0_0_22px_rgba(255,0,0,0.85)]
+    "
   />
 </div>
             <div className="flex items-center gap-3">
@@ -487,18 +554,67 @@ export default function RaceTrackVisualization({
             </button>
 
             <div className="mb-5">
-              <div className="mb-2 flex items-center gap-3">
-                <div
-                  className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-black"
-                  style={{ backgroundColor: TEAM_COLORS[selectedDriver.team], color: selectedDriver.team === 'Haas' ? '#000' : '#fff', boxShadow: `0 0 20px ${TEAM_COLORS[selectedDriver.team]}` }}
-                >
-                  {selectedDriver.position}
-                </div>
-                <div>
-                  <h3 className="text-lg font-black text-white">{selectedDriver.name}</h3>
-                  <p className="text-xs text-gray-400">{selectedDriver.team}</p>
-                </div>
-              </div>
+              <div className="mb-2 flex items-center justify-between">
+  <div className="flex items-center gap-4">
+    <div
+      className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-black"
+      style={{
+        backgroundColor: TEAM_COLORS[selectedDriver.team],
+        color: selectedDriver.team === 'Haas' ? '#000' : '#fff',
+        boxShadow: `0 0 20px ${TEAM_COLORS[selectedDriver.team]}`
+      }}
+    >
+      {selectedDriver.position}
+    </div>
+
+    <div>
+      <div className="flex items-center gap-2">
+        <h3 className="text-lg font-black text-white">
+          {selectedDriver.name}
+        </h3>
+
+        <motion.span
+          className="text-red-500 text-lg"
+          animate={{
+            opacity: [1, 0.4, 1],
+            scale: [1, 1.2, 1]
+          }}
+          transition={{
+            duration: 1.2,
+            repeat: Infinity
+          }}
+        >
+          ♥
+        </motion.span>
+      </div>
+
+      <p className="text-xs text-gray-400">
+        {selectedDriver.team}
+      </p>
+
+      <div className="mt-1 text-[10px] uppercase tracking-[0.3em] text-red-400">
+        Ferrari Driver Focus
+      </div>
+    </div>
+  </div>
+
+  <motion.img
+     src={DRIVER_GIFS[selectedDriver.name] || '/default-driver.gif'}
+     alt={selectedDriver.name}
+    className=" mr-8 h-16 w-16 rounded-2xl object-cover border border-red-500/30"
+    style={{
+      boxShadow: '0 0 30px rgba(220,0,0,0.45)'
+    }}
+    animate={{
+      scale: [1, 1.05, 1],
+      rotate: [0, 1, -1, 0]
+    }}
+    transition={{
+      duration: 2.5,
+      repeat: Infinity
+    }}
+  />
+</div>
               <div className="text-xs uppercase tracking-wider text-gray-500">{selectedDriver.id} · Lap {selectedDriver.lap}</div>
             </div>
 
