@@ -85,6 +85,35 @@ function buildAgentDataMap(agentChain: any[]): Record<string, any> {
                              : 'System (auto-approved)',
       }
     }
+    if (entry.agent === 'GovernanceApprovalAgent') {
+  const rec = entry.result?.approval_record
+
+  map['governance_approval'] = {
+    approval_state: rec?.approval_status,
+    approval_required: rec?.requires_human_approval,
+    escalation_state: rec?.requires_human_approval
+      ? 'critical_review'
+      : 'none',
+    approver_name: rec?.requires_human_approval
+      ? 'Awaiting race engineer approval'
+      : 'System (auto-approved)',
+  }
+
+  map['governance_console'] = {
+    approval_queue:
+      rec?.requires_human_approval
+        ? 'Pending Approval'
+        : 'Auto Approved',
+
+    reviewer:
+      rec?.requires_human_approval
+        ? 'Lead Race Engineer'
+        : 'System',
+
+    status:
+      rec?.approval_status || 'approved'
+  }
+}
 
     if (entry.agent === 'FanEngagementAgent') {
       map['fan_engagement'] = {
@@ -110,9 +139,9 @@ function animatePipeline(
 ) {
   const stageIds = [
     'safety_intelligence',
-    'strategy_recommendation',
-    'governance_approval',
-    'fan_engagement',
+  'strategy_recommendation',
+  'governance_approval',
+  ,
   ]
 
   const dataMap = buildAgentDataMap(agentChain)
@@ -177,10 +206,14 @@ function App() {
           track_temperature:  currentTelemetry.track_environment.track_temperature,
         } : {}
       },
-      { id: 'safety_intelligence',     name: 'Safety Intelligence Agent',     status: 'pending', data: {} },
-      { id: 'strategy_recommendation', name: 'Strategy Recommendation Agent', status: 'pending', data: {} },
-      { id: 'governance_approval',     name: 'Governance Approval Agent',     status: 'pending', data: {} },
-      { id: 'fan_engagement',          name: 'Fan Engagement Agent',          status: 'pending', data: {} },
+   { id: 'safety_intelligence',     name: 'Safety Intelligence Agent',     status: 'pending', data: {} },
+{ id: 'strategy_recommendation', name: 'Strategy Recommendation Agent', status: 'pending', data: {} },
+{ id: 'governance_approval',     name: 'Governance Approval Agent',     status: 'pending', data: {} },
+
+
+
+{ id: 'fan_engagement',          name: 'Fan Engagement Agent',          status: 'pending', data: {} },
+
     ])
   }, [])
 
@@ -197,6 +230,9 @@ function App() {
     websocket.onmessage = (event) => {
       const data = JSON.parse(event.data)
 
+      if (!isSimulatorRunning) {
+  return
+}
       // ── Raw telemetry stream ────────────────────────────────────────────────
       if (data.event === 'telemetry') {
         const td: TelemetryEvent = data.data
@@ -261,6 +297,7 @@ function App() {
               { id: 'safety_intelligence',     name: 'Safety Intelligence Agent',    status: 'pending',  data: {} },
               { id: 'strategy_recommendation', name: 'Strategy Recommendation Agent',status: 'pending',  data: {} },
               { id: 'governance_approval',     name: 'Governance Approval Agent',    status: 'pending',  data: {} },
+              { id: 'governance_console',      name: 'Governance Console', status: 'pending', data: {} },
               { id: 'fan_engagement',          name: 'Fan Engagement Agent',         status: 'pending',  data: {} },
             ]
           }
@@ -298,7 +335,7 @@ function App() {
 
     setWs(websocket)
     return () => websocket.close()
-  }, [initializeStages])
+  }, [initializeStages,isSimulatorRunning])
 
   // ---------------------------------------------------------------------------
   // Poll governance approvals every 5 s
@@ -411,7 +448,14 @@ setPrompt('')
           },
         }
 
-        const stageIds = ['safety_intelligence', 'strategy_recommendation', 'governance_approval', 'fan_engagement']
+        const stageIds = [
+  'safety_intelligence',
+  'strategy_recommendation',
+  'governance_approval',
+  'governance_console',
+  'fan_engagement',
+  'fan_hub'
+]
         stageIds.forEach((id, i) => {
           setTimeout(() => {
             setOrchestrationStages(prev =>
@@ -445,19 +489,48 @@ setPrompt('')
   // Simulator controls
   // ---------------------------------------------------------------------------
   const toggleSimulator = async () => {
-    try {
-      if (isSimulatorRunning) {
-        await fetch('/api/telemetry/stop', { method: 'POST' })
-        setIsSimulatorRunning(false)
-      } else {
-        await fetch('/api/telemetry/start', { method: 'POST' })
-        setIsSimulatorRunning(true)
-      }
-    } catch (error) {
-      console.error('Error toggling simulator:', error)
-    }
-  }
+  try {
+    if (isSimulatorRunning) {
+      await fetch('/api/telemetry/stop', {
+        method: 'POST'
+      })
 
+      setIsSimulatorRunning(false)
+
+      // Clear telemetry
+      setTelemetry(null)
+      setTelemetryHistory([])
+
+      // Clear AI pipeline
+      setOrchestrationStages([])
+
+      // Clear governance
+      setPendingApprovals([])
+
+      // Clear fan engagement
+      setFanMessages([])
+      setGeneratingFanMessage(false)
+
+      // Clear AI responses
+      setResponse(null)
+
+      // Clear chat history (optional)
+      setChatHistory([])
+
+    } else {
+      await fetch('/api/telemetry/start', {
+        method: 'POST'
+      })
+
+      setIsSimulatorRunning(true)
+
+      // Reset pipeline scaffold
+      initializeStages(null)
+    }
+  } catch (error) {
+    console.error('Error toggling simulator:', error)
+  }
+}
   const generateCritical = async () => {
     try {
       await fetch('/api/telemetry/critical', { method: 'POST' })
@@ -491,6 +564,35 @@ setPrompt('')
       setPendingApprovals(prev => prev.filter(a => a.approval_id !== approvalId))
 
       if (action === 'approve') {
+        setOrchestrationStages(prev =>
+  prev.map(stage => {
+
+    if (stage.id === 'governance_console') {
+      return {
+        ...stage,
+        status: 'complete',
+        timestamp: new Date().toISOString(),
+        data: {
+          decision: 'Approved',
+          approver: 'Marco Bellini'
+        }
+      }
+    }
+
+    if (stage.id === 'fan_engagement') {
+      return {
+        ...stage,
+        status: 'running',
+        timestamp: new Date().toISOString(),
+        data: {
+          status: 'Generating multilingual narratives'
+        }
+      }
+    }
+
+    return stage
+  })
+)
         const backendMessages = data.fan_messages || data.messages || []
 
         if (backendMessages.length > 0) {
@@ -572,21 +674,42 @@ setPrompt('')
 
         // Mark fan engagement stage as complete in the pipeline
         setOrchestrationStages(prev =>
-          prev.map(s => s.id === 'fan_engagement'
-            ? {
-                ...s,
-                status: 'complete',
-                timestamp: new Date().toISOString(),
-                data: {
-                  fan_narrative:         'Fan-safe race update generated and published.',
-                  multilingual_status:   'EN, IT, ES',
-                  telemetry_redaction:   true,
-                  publication_timestamp: new Date().toISOString()
-                }
-              }
-            : s
-          )
-        )
+  prev.map(s => {
+
+    if (s.id === 'governance_console') {
+      return {
+        ...s,
+        status: 'complete',
+        timestamp: new Date().toISOString()
+      }
+    }
+
+    if (s.id === 'fan_engagement') {
+      return {
+        ...s,
+        status: 'complete',
+        timestamp: new Date().toISOString(),
+        data: {
+          fan_narrative: 'Fan-safe race update generated'
+        }
+      }
+    }
+
+    if (s.id === 'fan_hub') {
+      return {
+        ...s,
+        status: 'complete',
+        timestamp: new Date().toISOString(),
+        data: {
+          publication_status: 'Published',
+          audience_reach: 'Global Tifosi'
+        }
+      }
+    }
+
+    return s
+  })
+)
       }
 
       setGeneratingFanMessage(false)
