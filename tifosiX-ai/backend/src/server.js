@@ -27,6 +27,8 @@ import { telemetrySimulator } from './services/telemetrySimulator.js';
 import { mcpClient } from './config/mcp.config.js';
 
 import { fanEngagementAgent } from './agents/fanEngagementAgent.js';
+
+let latestTelemetryEvent = null;
  
 // Load environment variables
 
@@ -119,145 +121,227 @@ function broadcast(event, data) {
 */
 
 app.post('/agent', async (req, res) => {
+  try {
+    const { prompt, context = {} } = req.body;
+
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: 'Prompt is required',
+      });
+    }
+
+    console.log(`\n📨 Received agent request: "${prompt}"`);
+
+    // Process through AI supervisor
+    if (event.risk_analysis.risk_score >= 60) {
+
+  console.log(
+    `🚨 High-risk event detected`
+  );
 
   try {
 
-    const { prompt, context = {} } = req.body;
- 
-    if (!prompt) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        error: 'Prompt is required',
-
-      });
-
-    }
- 
-    console.log(`\n📨 Received agent request: "${prompt}"`);
- 
-    // Process through Decision Twin Supervisor
-
-    const result = await decisionTwinSupervisorAgent.process(prompt, context);
- 
-    // AUTO FAN MESSAGE GENERATION FROM AI COMMAND CENTER
-
-    if (
-
-      prompt.toLowerCase().includes('fan') ||
-
-      prompt.toLowerCase().includes('tifosi') ||
-
-      prompt.toLowerCase().includes('social') ||
-
-      prompt.toLowerCase().includes('update')
-
-    ) {
-
-      try {
-
-        const messages = [
-
-          {
-
-            message_id: `auto_${Date.now()}_en`,
-
-            language: 'en',
-
-            message_title: '🚨 Ferrari Strategy Alert',
-
-            message_content: 'Ferrari is adapting strategy in real time after elevated tire stress. The pit wall is protecting performance and race position.',
-
-            emotional_tone: 'urgent'
-
-          },
-
-          {
-
-            message_id: `auto_${Date.now()}_it`,
-
-            language: 'it',
-
-            message_title: '🇮🇹 Aggiornamento Ferrari',
-
-            message_content: 'Ferrari adatta la strategia in tempo reale dopo segnali di stress sugli pneumatici. Il muretto protegge prestazione e posizione.',
-
-            emotional_tone: 'dramatic'
-
-          },
-
-          {
-
-            message_id: `auto_${Date.now()}_es`,
-
-            language: 'es',
-
-            message_title: '🇪🇸 Alerta Estratégica Ferrari',
-
-            message_content: 'Ferrari ajusta la estrategia en tiempo real tras señales de estrés en los neumáticos. El equipo protege rendimiento y posición.',
-
-            emotional_tone: 'strategic'
-
-          },
-
-          {
-
-            message_id: `auto_${Date.now()}_hi`,
-
-            language: 'hi',
-
-            message_title: '🇮🇳 फेरारी रणनीति अपडेट',
-
-            message_content: 'टायर पर बढ़ते दबाव के बाद फेरारी रियल टाइम में रणनीति बदल रही है। पिट वॉल प्रदर्शन और रेस पोजिशन को सुरक्षित रखने पर ध्यान दे रही है।',
-
-            emotional_tone: 'fan-friendly'
-
-          }
-
-        ];
- 
-        broadcast('fan_messages', {
-
-          messages,
-
-          timestamp: new Date().toISOString()
-
-        });
- 
-        result.fan_messages = messages;
-
-        console.log('📣 Auto fan messages generated');
-
-      } catch (err) {
-
-        console.error('❌ Fan generation failed:', err);
-
-      }
-
-    }
- 
-    // Broadcast result to WebSocket clients
-
-    broadcast('agent_response', result);
- 
-    res.json(result);
- 
-  } catch (error) {
-
-    console.error('❌ Agent endpoint error:', error);
-
-    res.status(500).json({
-
-      success: false,
-
-      error: error.message,
-
+    // Only initialize pipeline
+    broadcast('pipeline_start', {
+      event_id: event.event_id,
+      vehicle_id: event.vehicle.vehicle_id,
+      risk_score:
+        event.risk_analysis.risk_score,
+      severity:
+        event.risk_analysis.severity,
     });
 
-  }
+    // ONLY Safety + Strategy
+    const safetyResult =
+      await decisionTwinSupervisorAgent.process(
+        `Telemetry shows ${event.vehicle.vehicle_id}
+         has ${event.risk_analysis.event_type}.
+         Assess safety risk and recommend strategy only.`,
+        {
+          telemetryEvent: event,
+          skipGovernance: true,
+          skipFanEngagement: true
+        }
+      );
 
+    // Broadcast Safety/Strategy only
+    broadcast(
+      'auto_analysis',
+      safetyResult
+    );
+
+    console.log(
+      '✅ Safety & Strategy updated'
+    );
+
+  } catch (error) {
+
+    console.error(
+      '❌ Auto-analysis error:',
+      error
+    );
+  }
+}
+
+    // ==========================
+    // AUTO FAN MESSAGE GENERATION
+    // ==========================
+
+    const promptText = prompt.toLowerCase();
+
+    const shouldGenerateFanMessages =
+  // fan/social
+  promptText.includes('fan') ||
+  promptText.includes('tifosi') ||
+  promptText.includes('social') ||
+  promptText.includes('update') ||
+  promptText.includes('broadcast') ||
+  promptText.includes('crowd') ||
+  promptText.includes('audience') ||
+  promptText.includes('supporters') ||
+  promptText.includes('public') ||
+
+  // pit strategy
+  promptText.includes('pit') ||
+  promptText.includes('box') ||
+  promptText.includes('stop') ||
+  promptText.includes('undercut') ||
+  promptText.includes('overcut') ||
+  promptText.includes('stint') ||
+  promptText.includes('strategy') ||
+  promptText.includes('pace') ||
+
+  // tire issues
+  promptText.includes('tire') ||
+  promptText.includes('tyre') ||
+  promptText.includes('wear') ||
+  promptText.includes('degradation') ||
+  promptText.includes('grip') ||
+  promptText.includes('traction') ||
+  promptText.includes('vibration') ||
+  promptText.includes('puncture') ||
+
+  // weather
+  promptText.includes('weather') ||
+  promptText.includes('rain') ||
+  promptText.includes('storm') ||
+  promptText.includes('cloud') ||
+  promptText.includes('temperature') ||
+  promptText.includes('wind') ||
+  promptText.includes('track condition') ||
+  promptText.includes('wet') ||
+  promptText.includes('dry') ||
+
+  // attack / race action
+  promptText.includes('attack') ||
+  promptText.includes('overtake') ||
+  promptText.includes('defend') ||
+  promptText.includes('push') ||
+  promptText.includes('battle') ||
+  promptText.includes('chase') ||
+  promptText.includes('fight') ||
+  promptText.includes('gap') ||
+
+  // safety/risk
+  promptText.includes('risk') ||
+  promptText.includes('critical') ||
+  promptText.includes('danger') ||
+  promptText.includes('incident') ||
+  promptText.includes('safety') ||
+  promptText.includes('alert') ||
+
+  // race management
+  promptText.includes('race') ||
+  promptText.includes('lap') ||
+  promptText.includes('performance') ||
+  promptText.includes('telemetry') ||
+  promptText.includes('engine') ||
+  promptText.includes('fuel');
+
+    if (shouldGenerateFanMessages) {
+
+      const driverName =
+        latestTelemetryEvent?.vehicle?.driver_name ||
+        'Unknown Driver';
+
+      const teamName =
+        latestTelemetryEvent?.vehicle?.team_name ||
+        'Unknown Team';
+
+      const now = Date.now();
+
+      const messages = [
+        {
+          message_id: `auto_${now}_en`,
+          language: 'en',
+          message_title:
+            `🚨 ${teamName} Strategy Alert`,
+          message_content:
+            `${teamName} is adapting strategy for ${driverName} in real time while monitoring race pace, tire condition, and track position.`,
+          emotional_tone: 'urgent'
+        },
+
+        {
+          message_id: `auto_${now}_it`,
+          language: 'it',
+          message_title:
+            `🇮🇹 Aggiornamento ${teamName}`,
+          message_content:
+            `${teamName} adatta la strategia per ${driverName} in tempo reale proteggendo prestazione e posizione in pista.`,
+          emotional_tone: 'dramatic'
+        },
+
+        {
+          message_id: `auto_${now}_es`,
+          language: 'es',
+          message_title:
+            `🇪🇸 Alerta ${teamName}`,
+          message_content:
+            `${teamName} ajusta la estrategia para ${driverName} mientras protege rendimiento y posición en carrera.`,
+          emotional_tone: 'strategic'
+        },
+
+        {
+          message_id: `auto_${now}_hi`,
+          language: 'hi',
+          message_title:
+            `🇮🇳 ${teamName} अपडेट`,
+          message_content:
+            `${teamName} ${driverName} के लिए रियल टाइम में रणनीति बदल रही है और रेस पोजिशन सुरक्षित रख रही है।`,
+          emotional_tone: 'fan-friendly'
+        }
+      ];
+
+      result.fan_messages = messages;
+
+      broadcast('fan_messages', {
+        messages,
+        timestamp: new Date().toISOString()
+      });
+
+      console.log(
+        '📣 Auto fan messages generated'
+      );
+    }
+
+    // Broadcast AI response
+    broadcast('agent_response', result);
+
+    return res.json(result);
+
+  } catch (error) {
+
+    console.error(
+      '❌ Agent endpoint error:',
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
 });
  
 // ============================================================================
@@ -421,13 +505,20 @@ const fanResult =
       }
     },
     {
-      event_id: approvalRecord.event_id,
-      vehicle: {
-        vehicle_id: 'FER-16',
-        driver_name: 'Charles Leclerc',
-        team_name: 'Ferrari'
-      }
-    },
+  event_id: approvalRecord.event_id,
+  vehicle: {
+    vehicle_id:
+      latestTelemetryEvent?.vehicle?.vehicle_id || 'FER-16',
+
+    driver_name:
+      latestTelemetryEvent?.vehicle?.driver_name ||
+      'Unknown Driver',
+
+    team_name:
+      latestTelemetryEvent?.vehicle?.team_name ||
+      'Unknown Team'
+  }
+},
     {
       languages: ['en', 'es', 'it', 'hi']
     }
@@ -778,6 +869,8 @@ app.get('/health', (req, res) => {
 
 telemetrySimulator.on('telemetry', async (event) => {
 
+  latestTelemetryEvent = event;
+
   console.log(`📡 Telemetry event received: ${event.event_id}`);
  
   // Broadcast raw telemetry to WebSocket clients first
@@ -806,13 +899,19 @@ telemetrySimulator.on('telemetry', async (event) => {
 
       });
  
-      const result = await decisionTwinSupervisorAgent.process(
+      const result =
+  await decisionTwinSupervisorAgent.process(
+    `Telemetry shows ${event.vehicle.vehicle_id}
+     has ${event.risk_analysis.event_type}.
+     Assess safety risk and recommend strategy only.`,
+    {
+      telemetryEvent: event,
 
-        `Telemetry shows ${event.vehicle.vehicle_id} has ${event.risk_analysis.event_type}. Assess safety risk, recommend strategy, and request approval if needed.`,
-
-        { telemetryEvent: event }
-
-      );
+      // IMPORTANT
+      skipGovernance: true,
+      skipFanEngagement: true
+    }
+  );
  
       // Broadcast each agent step individually with a staggered delay
 

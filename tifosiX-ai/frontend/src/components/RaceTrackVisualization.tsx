@@ -546,7 +546,7 @@ export default function RaceTrackVisualization({
             initial={{ opacity: 0, x: 420 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 420 }}
-            className="absolute bottom-4 right-4 top-24 z-50 w-88 overflow-y-auto rounded-2xl border border-red-500/25 bg-black/92 p-5 backdrop-blur-2xl"
+            className="absolute bottom-4 right-4 top-34 z-50 w-88 overflow-y-auto rounded-2xl border border-red-500/25 bg-black/92 p-5 backdrop-blur-2xl"
             style={{ width: '360px', boxShadow: '0 0 60px rgba(220,0,0,0.35)' }}
           >
             <button onClick={() => setSelectedDriver(null)} className="absolute right-3 top-3 rounded-lg p-1.5 transition-colors hover:bg-white/10">

@@ -149,6 +149,7 @@ function animatePipeline(
 function App() {
   const [prompt, setPrompt] = useState('')
   const [response, setResponse] = useState<any>(null)
+  const [chatHistory, setChatHistory] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [telemetry, setTelemetry] = useState<TelemetryEvent | null>(null)
   const [telemetryHistory, setTelemetryHistory] = useState<any[]>([])
@@ -314,7 +315,7 @@ function App() {
     }
 
     fetchApprovals()
-    const interval = setInterval(fetchApprovals, 5000)
+    const interval = setInterval(fetchApprovals, 15000)
     return () => clearInterval(interval)
   }, [])
 
@@ -343,7 +344,39 @@ function App() {
       })
 
       const data = await res.json()
-      setResponse(data)
+
+setResponse(data)
+
+setChatHistory(prev => [
+  ...prev,
+  {
+    role: 'user',
+    message: prompt
+  },
+  {
+    role: 'assistant',
+    message:
+      data?.summary ||
+      data?.message ||
+      data?.result?.summary ||
+      'AI workflow executed successfully'
+  }
+])
+
+// Automatically load fan messages
+if (data?.fan_messages?.length) {
+  const newMessages = data.fan_messages.map((msg: any) => ({
+    ...msg,
+    timestamp: new Date().toISOString(),
+    status: 'published'
+  }))
+
+  setFanMessages(prev =>
+    [...newMessages, ...prev].slice(0, 20)
+  )
+}
+
+setPrompt('')
 
       // Animate pipeline using real agent_chain from response
       const agentChain: any[] = data?.result?.agent_chain || []
@@ -660,8 +693,12 @@ function App() {
                 <span className="text-[10px] uppercase tracking-[0.3em] text-gray-400">Active Driver</span>
                 <span className="rounded-full bg-green-500/20 px-2 py-1 text-[10px] font-bold text-green-400">PUSH</span>
               </div>
-              <div className="text-xl font-black tracking-wide text-white">Charles Leclerc</div>
-              <div className="mt-1 text-sm text-gray-500">Ferrari SF-24</div>
+              <div className="text-xl font-black tracking-wide text-white">
+                    {telemetry?.vehicle?.driver_name || 'No Driver'}
+              </div>
+             <div className="mt-1 text-sm text-gray-500">
+  {telemetry?.vehicle?.team_name || 'Unknown Team'}
+</div>
               <div className="mt-5 h-2 overflow-hidden rounded-full bg-black/50">
                 <motion.div
                   initial={{ width: 0 }}
@@ -724,34 +761,32 @@ function App() {
                 <div className="rounded-xl border border-white/5 bg-black/30 px-3 py-2">"Tire degradation increasing."</div>
               </div>
             </div>
-          </div>
-          {/* IBM Partnership Footer */}
-<div className="mt-auto p-5 border-t border-cyan-500/10">
-  <div className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/30 to-blue-950/10 p-4 backdrop-blur-xl shadow-[0_0_30px_rgba(0,120,255,0.08)]">
 
-    <div className="flex items-center justify-center mb-3">
-      <img
-        src={ibmLogo}
-        alt="IBM Logo"
-        className="h-8 object-contain opacity-90"
-      />
-    </div>
+            {/* IBM Footer */}
+<div className="mt-5 rounded-3xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 to-black/40 p-5 backdrop-blur-xl">
+  <div className="flex justify-center mb-4">
+    <img
+      src={ibmLogo}
+      alt="IBM"
+      className="h-10 object-contain opacity-90"
+    />
+  </div>
 
-    <div className="text-center">
-      <p className="text-[10px] uppercase tracking-[0.3em] text-cyan-400/70">
-        Powered By
-      </p>
+  <div className="text-center">
+    <p className="text-[10px] uppercase tracking-[0.3em] text-cyan-400/70">
+      Powered By
+    </p>
 
-      <h3 className="mt-1 text-sm font-black text-white tracking-wide">
-        IBM watsonx
-      </h3>
+    <h3 className="text-lg font-bold text-white mt-2">
+      IBM watsonx
+    </h3>
 
-      <p className="mt-1 text-xs text-gray-500 leading-relaxed">
-        AI Orchestration & Enterprise Intelligence Platform
-      </p>
-    </div>
+    <p className="text-xs text-gray-500 mt-1">
+      Enterprise AI Intelligence Platform
+    </p>
   </div>
 </div>
+          </div>
         </aside>
 
         {/* ── Main content ──────────────────────────────────────────────────── */}
@@ -1042,6 +1077,43 @@ function App() {
                 </div>
               </section>
             </div>
+
+            {/* AI Chat History */}
+<section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
+  <h3 className="text-xl font-bold mb-4">
+    AI Command Chat
+  </h3>
+
+  <div className="space-y-4 max-h-[400px] overflow-y-auto">
+    {chatHistory.length > 0 ? (
+      chatHistory.map((msg, index) => (
+        <div
+          key={index}
+          className={`p-4 rounded-xl ${
+            msg.role === 'user'
+              ? 'bg-ferrari-red/10 border border-ferrari-red/30 ml-12'
+              : 'bg-cyan-500/10 border border-cyan-500/30 mr-12'
+          }`}
+        >
+          <div className="text-xs text-gray-500 mb-2 uppercase">
+            {msg.role === 'user'
+              ? 'Race Engineer'
+              : 'TifosiX AI'}
+          </div>
+
+          <div className="text-sm text-gray-300">
+            {msg.message}
+          </div>
+        </div>
+      ))
+    ) : (
+      <EmptyState
+        icon={<Brain className="w-12 h-12 mx-auto mb-4 opacity-50" />}
+        text="Ask TifosiX AI anything"
+      />
+    )}
+  </div>
+</section>
 
             {/* Raw workflow response */}
             <AnimatePresence>

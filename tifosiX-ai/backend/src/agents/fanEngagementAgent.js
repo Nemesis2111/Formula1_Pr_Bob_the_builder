@@ -52,7 +52,7 @@ export class FanEngagementAgent {
             tone: 'analytical',
             title: '📊 Pit Wall Analysis',
             content:
-              'Ferrari is shifting the strategy window for {driver}, balancing race pace, tire life, and track position as conditions evolve.'
+                    '{team} is shifting the strategy window for {driver}, balancing race pace, tire life, and track position as conditions evolve.'
           },
           {
             tone: 'confident',
@@ -111,7 +111,7 @@ export class FanEngagementAgent {
             tone: 'dramatic',
             title: '🔥 Cambio Clave en la Carrera',
             content:
-              'Un momento crucial se desarrolla para {driver}. Ferrari reacciona rápidamente con una parada defensiva para reducir el riesgo y reajustar la estrategia.'
+              'Un momento crucial se desarrolla para {driver}. {team} reacciona rápidamente con una parada defensiva para reducir el riesgo y reajustar la estrategia.'
           },
           {
             tone: 'broadcast',
@@ -138,7 +138,7 @@ export class FanEngagementAgent {
             tone: 'analytical',
             title: '📊 Análisis del Muro',
             content:
-              'Ferrari ajusta la ventana estratégica para {driver}, equilibrando ritmo, vida de neumáticos y posición en pista.'
+              '{team} ajusta la ventana estratégica para {driver}, equilibrando ritmo, vida de neumáticos y posición en pista.'
           },
           {
             tone: 'confident',
@@ -197,7 +197,7 @@ export class FanEngagementAgent {
             tone: 'dramatic',
             title: '🔥 Momento Decisivo',
             content:
-              'Un momento cruciale per {driver}. Ferrari reagisce rapidamente con una sosta difensiva per ridurre il rischio e riprogrammare la gara.'
+              'Un momento cruciale per {driver}. {team} reagisce rapidamente con una sosta difensiva per ridurre il rischio e riprogrammare la gara.'
           },
           {
             tone: 'broadcast',
@@ -224,7 +224,7 @@ export class FanEngagementAgent {
             tone: 'analytical',
             title: '📊 Analisi dal Muretto',
             content:
-              'Ferrari modifica la finestra strategica per {driver}, bilanciando passo gara, vita gomme e posizione in pista.'
+              '{team} modifica la finestra strategica per {driver}, bilanciando passo gara, vita gomme e posizione in pista.'
           },
           {
             tone: 'confident',
@@ -468,7 +468,9 @@ export class FanEngagementAgent {
 
       const template = this.pickTemplate(templatePool, vehicle, recommendation, index);
 
-      const content = template.content.replace('{driver}', vehicle.driver_name);
+      const content = template.content
+  .replace('{driver}', vehicle.driver_name)
+  .replace('{team}', vehicle.team_name);
 
       return {
         language: lang,
