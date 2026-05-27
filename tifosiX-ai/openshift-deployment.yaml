@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tifosix-config
+data:
+  NODE_ENV: "production"
+  PORT: "3001"
+  CORS_ORIGIN: "*"
+  CONTEXT_STUDIO_URL: "http://context-studio-service:3000"
+  MCP_SERVER_URL: "http://context-studio-service:3000"
+  AGENT_PERSONA: "TifosiX_System_Architect"
+  HIGH_RISK_THRESHOLD: "80"
+  LOW_RISK_THRESHOLD: "50"
+  MIN_CONFIDENCE_THRESHOLD: "0.70"
+  AUTO_APPROVAL_CONFIDENCE: "0.85"
+  TELEMETRY_INTERVAL_MS: "5000"
+  ENABLE_MOCK_TELEMETRY: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tifosix-secrets
+type: Opaque
+stringData:
+  MCP_API_KEY: "replace-this"
+  CONTEXT_ID: "ctx_cef8bb69f42f"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tifosix-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tifosix-backend
+  template:
+    metadata:
+      labels:
+        app: tifosix-backend
+    spec:
+      containers:
+        - name: tifosix-backend
+          image: tifosix-backend:latest
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: tifosix-config
+            - secretRef:
+                name: tifosix-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tifosix-backend
+spec:
+  selector:
+    app: tifosix-backend
+  ports:
+    - name: http
+      port: 3001
+      targetPort: 3001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tifosix-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tifosix-frontend
+  template:
+    metadata:
+      labels:
+        app: tifosix-frontend
+    spec:
+      containers:
+        - name: tifosix-frontend
+          image: tifosix-frontend:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tifosix-frontend
+spec:
+  selector:
+    app: tifosix-frontend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: tifosix-frontend
+spec:
+  to:
+    kind: Service
+    name: tifosix-frontend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

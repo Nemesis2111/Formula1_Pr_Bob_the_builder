@@ -11,8 +11,8 @@ class TelemetrySimulator extends EventEmitter {
     super();
     this.isRunning = false;
     this.interval = null;
-    this.currentLap = 1;
-    this.totalLaps = 58;
+    this.currentLap = 0;
+    this.totalLaps = 53;
     
     // Vehicle state
     this.vehicles = [
@@ -39,13 +39,21 @@ class TelemetrySimulator extends EventEmitter {
    * Start telemetry simulation
    */
   start(intervalMs = 5000) {
-    if (this.isRunning) {
-      console.log('⚠️ Telemetry simulator already running');
-      return;
-    }
+  if (this.isRunning) {
+    console.log('⚠️ Telemetry simulator already running');
+    return;
+  }
 
-    console.log('🏎️ Starting telemetry simulator...');
-    this.isRunning = true;
+  console.log('🏎️ Starting telemetry simulator...');
+
+  // Reset race state
+  this.currentLap = 0;
+
+  this.vehicles.forEach(vehicle => {
+    vehicle.tire_age = 0;
+  });
+
+  this.isRunning = true;
     
     this.interval = setInterval(() => {
       this.generateTelemetryEvent();
@@ -59,13 +67,20 @@ class TelemetrySimulator extends EventEmitter {
    * Stop telemetry simulation
    */
   stop() {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-    this.isRunning = false;
-    console.log('🛑 Telemetry simulator stopped');
+  if (this.interval) {
+    clearInterval(this.interval);
+    this.interval = null;
   }
+
+  this.isRunning = false;
+  this.currentLap = 0;
+
+  this.vehicles.forEach(vehicle => {
+    vehicle.tire_age = 0;
+  });
+
+  console.log('🛑 Telemetry simulator stopped');
+}
 
   /**
    * Generate a telemetry event

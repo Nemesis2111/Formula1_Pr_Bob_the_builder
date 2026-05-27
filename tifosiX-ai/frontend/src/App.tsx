@@ -10,6 +10,7 @@ import {
   AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip
 } from 'recharts'
 import RaceTrackVisualization from './components/RaceTrackVisualization'
+const API_URL = import.meta.env.VITE_API_URL || '/api'
 
 interface TelemetryEvent {
   event_id: string
@@ -138,10 +139,9 @@ function animatePipeline(
 ) {
   const stageIds = [
     'safety_intelligence',
-  'strategy_recommendation',
-  'governance_approval',
-  'fan_engagement',
-  ,
+    'strategy_recommendation',
+    'governance_approval',
+    'fan_engagement',
   ]
 
   const dataMap = buildAgentDataMap(agentChain)
@@ -222,10 +222,8 @@ function App() {
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const websocket = new WebSocket(
-      window.location.hostname === 'localhost'
-      ? 'ws://localhost:3001'
-      : `ws://${window.location.host}/ws`
-   )
+      import.meta.env.VITE_WS_URL || `ws://${window.location.host}/ws`
+    )
 
     websocket.onopen = () => {
       console.log('Connected to TifosiX AI')
@@ -347,7 +345,7 @@ function App() {
   useEffect(() => {
     const fetchApprovals = async () => {
       try {
-        const res = await fetch('/api/governance/approvals')
+        const res = await fetch(`${API_URL}/governance/approvals`)
         const data = await res.json()
         if (data.success) setPendingApprovals(data.approvals)
       } catch (error) {
@@ -373,7 +371,7 @@ function App() {
     initializeStages(currentTelemetry)
 
     try {
-      const res = await fetch('/api/agent', {
+      const res = await fetch(`${API_URL}/agent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -495,7 +493,7 @@ setPrompt('')
   const toggleSimulator = async () => {
   try {
     if (isSimulatorRunning) {
-      await fetch('/api/telemetry/stop', {
+      await fetch(`${API_URL}/telemetry/stop`, {
         method: 'POST'
       })
 
@@ -522,10 +520,9 @@ setPrompt('')
       setChatHistory([])
 
     } else {
-      await fetch('/api/telemetry/start', {
-        method: 'POST'
-      })
-
+  await fetch(`${API_URL}/telemetry/start`, {
+    method: 'POST'
+  })
       setIsSimulatorRunning(true)
 
       // Reset pipeline scaffold
@@ -537,7 +534,7 @@ setPrompt('')
 }
   const generateCritical = async () => {
     try {
-      await fetch('/api/telemetry/critical', { method: 'POST' })
+      await fetch(`${API_URL}/telemetry/critical`, { method: 'POST' })
     } catch (error) {
       console.error('Error generating critical event:', error)
     }
@@ -550,7 +547,7 @@ setPrompt('')
     try {
       if (action === 'approve') setGeneratingFanMessage(true)
 
-      const res = await fetch(`/api/governance/approvals/${approvalId}/decide`, {
+      const res = await fetch(`${API_URL}/governance/approvals/${approvalId}/decide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -923,15 +920,15 @@ setPrompt('')
               <div className="flex items-center gap-8">
                 <span className="flex items-center gap-2 text-sm font-semibold">
                   <Activity className="w-5 h-5 text-ferrari-red animate-pulse" />
-                  Lap {telemetry?.lap || 1}/58
+                  Lap {isSimulatorRunning ? (telemetry?.lap ?? 0) : 0}/53
                 </span>
                 <span className="flex items-center gap-2 text-sm">
                   <Thermometer className="w-4 h-4 text-orange-400" />
-                  {telemetry?.track_environment.track_temperature.toFixed(0) || '--'}°C Track
+                  {telemetry?.track_environment?.track_temperature?.toFixed(0) ?? '--'}°C Track
                 </span>
                 <span className="flex items-center gap-2 text-sm">
                   <Wind className="w-4 h-4 text-cyan-400" />
-                  {telemetry?.weather_condition.wind_speed_kmh.toFixed(0) || '--'} km/h Wind
+                  {telemetry?.weather_condition?.wind_speed_kmh?.toFixed(0) ?? '--'} km/h Wind
                 </span>
               </div>
 

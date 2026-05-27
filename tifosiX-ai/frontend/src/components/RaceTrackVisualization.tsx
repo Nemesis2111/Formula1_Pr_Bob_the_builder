@@ -136,7 +136,7 @@ export default function RaceTrackVisualization({
   )
 
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null)
-  const [currentLap, setCurrentLap] = useState(1)
+  const [currentLap, setCurrentLap] = useState(0)
   const [totalLaps] = useState(58)
   const pathRef = useRef<SVGPathElement>(null)
   const [pathLength, setPathLength] = useState(0)
@@ -204,7 +204,7 @@ export default function RaceTrackVisualization({
 })
       return recalculatePositions(updated)
     })
-    setCurrentLap(telemetryData.lap || currentLap)
+    setCurrentLap(telemetryData?.lap ?? 0)
   }, [telemetryData, orchestrationStages])
 
   useEffect(() => {
