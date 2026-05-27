@@ -157,11 +157,10 @@ app.post('/agent', async (req, res) => {
       await decisionTwinSupervisorAgent.process(
         `Telemetry shows ${event.vehicle.vehicle_id}
          has ${event.risk_analysis.event_type}.
-         Assess safety risk and recommend strategy only.`,
+         Assess safety risk, recommend strategy, evaluate governance approval, and prepare fan engagement workflow.`,
         {
-          telemetryEvent: event,
-          skipGovernance: true,
-          skipFanEngagement: true
+           telemetryEvent: event,
+           languages: ['en', 'it', 'es', 'hi']
         }
       );
 

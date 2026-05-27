@@ -10,7 +10,6 @@ import {
   AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip
 } from 'recharts'
 import RaceTrackVisualization from './components/RaceTrackVisualization'
-import './App.css'
 
 interface TelemetryEvent {
   event_id: string
@@ -141,6 +140,7 @@ function animatePipeline(
     'safety_intelligence',
   'strategy_recommendation',
   'governance_approval',
+  'fan_engagement',
   ,
   ]
 
@@ -221,7 +221,11 @@ function App() {
   // WebSocket
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    const websocket = new WebSocket('ws://localhost:3001')
+    const websocket = new WebSocket(
+      window.location.hostname === 'localhost'
+      ? 'ws://localhost:3001'
+      : `ws://${window.location.host}/ws`
+   )
 
     websocket.onopen = () => {
       console.log('Connected to TifosiX AI')
