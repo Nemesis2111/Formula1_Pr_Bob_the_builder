@@ -236,7 +236,7 @@ export class DecisionTwinSupervisorAgent {
     const approvalStatus = governanceResult.approval_record?.approval_status;
     const requiresHumanApproval = governanceResult.approval_record?.requires_human_approval;
  
-    if (approvalStatus === 'approved' || requiresHumanApproval) {
+    if (approvalStatus === 'approved') {
       console.log('🔵 Running FanEngagementAgent...');
       try {
         const fanResult = await fanEngagementAgent.generateMessage(
@@ -255,7 +255,7 @@ export class DecisionTwinSupervisorAgent {
           safety_analysis: safetyResult.analysis,
           strategy_recommendation: strategyResult.recommendation,
           governance_decision: governanceResult.approval_record,
-          fan_messages: fanResult?.messages || null,
+          fan_messages: null,
           requires_human_approval: requiresHumanApproval,
           final_state: this.determineFinalState(governanceResult),
         };

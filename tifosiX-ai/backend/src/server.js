@@ -123,124 +123,133 @@ function broadcast(event, data) {
 app.post('/agent', async (req, res) => {
   try {
     const { prompt, context = {} } = req.body;
-
-    if (!prompt) {
-      return res.status(400).json({
-        success: false,
-        error: 'Prompt is required',
-      });
-    }
-
-    console.log(`\n📨 Received agent request: "${prompt}"`);
-
-    // Process through AI supervisor
-    const telemetryEvent =
-      context?.telemetryEvent ||
-      latestTelemetryEvent ||
-      null;
-
+    if (!prompt) return res.status(400).json({ success: false, error: 'Prompt is required' });
+ 
+    const telemetryEvent = context?.telemetryEvent || latestTelemetryEvent || null;
+ 
     broadcast('pipeline_start', {
-      event_id:
-        telemetryEvent?.event_id ||
-        `manual_${Date.now()}`,
-
-      vehicle_id:
-        telemetryEvent?.vehicle?.vehicle_id ||
-        'FER-16',
-
-      risk_score:
-        telemetryEvent?.risk_analysis?.risk_score ||
-        50,
-
-      severity:
-        telemetryEvent?.risk_analysis?.severity ||
-        'moderate',
-    });
-
-    const result =
-      await decisionTwinSupervisorAgent.process(
-        prompt,
-        {
-          telemetryEvent,
-          languages: ['en', 'it', 'es', 'hi'],
-        }
-      );
-
-   // ==========================
-// DIRECT FAN MESSAGE GENERATION FOR CHAT
-// ==========================
-
-let fanMessages = [];
-
-const fanResult = await fanEngagementAgent.generateMessage(
-  {
-    event_id: telemetryEvent?.event_id || `manual_${Date.now()}`,
-    analysis: {
+      event_id: telemetryEvent?.event_id || `manual_${Date.now()}`,
+      vehicle_id: telemetryEvent?.vehicle?.vehicle_id || 'FER-16',
       risk_score: telemetryEvent?.risk_analysis?.risk_score || 50,
       severity: telemetryEvent?.risk_analysis?.severity || 'moderate',
-    },
-  },
-  {
-  strategy_id: `strategy_${Date.now()}`,
-  recommendation: {
-    user_prompt: prompt,
-    fan_instruction: `Create a fan-safe answer specifically for this user question: "${prompt}"`,
-    pit_window: {
-      action: prompt,
-    },
-    reasoning: prompt,
-  },
-},
-  {
-  approval_record: {
-    blocked: false,
-    approval_status: 'approved',
-    user_prompt: prompt,
-  },
-},
-  {
-    event_id: telemetryEvent?.event_id || `manual_${Date.now()}`,
-    vehicle: {
-      vehicle_id: telemetryEvent?.vehicle?.vehicle_id || 'FER-16',
-      driver_name: telemetryEvent?.vehicle?.driver_name || 'Unknown Driver',
-      team_name: telemetryEvent?.vehicle?.team_name || 'Ferrari',
-    },
-  },
-  {
-    languages: ['en', 'it', 'es', 'hi'],
+    });
+ 
+    // --- 1. Run the supervisor agent (handles telemetry path with templates) ---
+    const result = await decisionTwinSupervisorAgent.process(prompt, {
+      telemetryEvent,
+      languages: ['en', 'it', 'es', 'hi'],
+    });
+ 
+    // --- 2. Build a plain chat answer separately (no fanEngagementAgent abuse) ---
+    const lowerPrompt = prompt.toLowerCase();
+    let chatAnswer = '';
+ 
+    if (telemetryEvent) {
+      const risk = telemetryEvent.risk_analysis?.risk_score ?? 50;
+      const wear = telemetryEvent.vehicle?.tire_wear_percent?.toFixed(1) ?? '--';
+      const vib  = telemetryEvent.vehicle?.steering_vibration?.toFixed(1) ?? '--';
+ 
+      if (lowerPrompt.includes('pit')) {
+        chatAnswer = `Based on live telemetry — tire wear at ${wear}% and vibration at ${vib} — ${risk >= 70 ? 'Ferrari should box this lap. Risk is elevated.' : 'a pit stop in the next 2–3 laps looks optimal.'}`;
+      } else if (lowerPrompt.includes('degradation') || lowerPrompt.includes('tire') || lowerPrompt.includes('tyre')) {
+        chatAnswer = `Current tire wear is ${wear}%. ${risk >= 70 ? 'Degradation is critical — prepare for an immediate stop.' : 'Degradation is manageable but increasing. Monitor closely.'}`;
+      } else if (lowerPrompt.includes('vibration')) {
+        chatAnswer = `Steering vibration reading is ${vib}. ${vib > 5 ? 'This is above safe threshold — reduce pace and prepare to box.' : 'Within acceptable range, continue monitoring.'}`;
+      } else if (lowerPrompt.includes('aggressive')) {
+        chatAnswer = `With risk at ${risk}/100, an aggressive undercut strategy is ${risk >= 70 ? 'not recommended — stabilize first.' : 'viable. Pit early, push on fresh rubber.'}`;
+      } else if (lowerPrompt.includes('conservative')) {
+        chatAnswer = `Conservative approach: extend the stint ${risk >= 60 ? 'cautiously — risk score ${risk} suggests limited headroom.' : 'by 3–4 laps, then box for mediums.'}`;
+      } else if (lowerPrompt.includes('safest pit window')) {
+        chatAnswer = `Safest pit window is ${risk >= 70 ? 'immediately — this lap or next.' : 'laps 2–3 from now, before tire stress peaks.'}`;
+      } else if (lowerPrompt.includes('summarize') || lowerPrompt.includes('status')) {
+        chatAnswer = `Status: Tire wear ${wear}%, vibration ${vib}, risk score ${risk} (${telemetryEvent.risk_analysis?.severity}). ${risk >= 70 ? 'Immediate action recommended.' : 'Situation stable, monitoring.'}`;
+      } else if (lowerPrompt.includes('race engineer')) {
+        chatAnswer = `Race engineer call: risk ${risk}/100, wear ${wear}%. ${risk >= 70 ? 'Box now — protect the driver and reset strategy.' : 'Hold position, review in 2 laps.'}`;
+      } else {
+        chatAnswer = `Telemetry active — risk score ${risk}, tire wear ${wear}%, vibration ${vib}. How can I assist further?`;
+      }
+    } else {
+      // No telemetry — generic answers
+      const genericAnswers = {
+  pit: 'No live telemetry available. Generally, pit when tire wear exceeds 70% or risk score crosses 65.',
+  tire: 'Connect telemetry for live tire data. Tire strategy depends on compound, wear rate, and track temperature.',
+  vibration: 'Steering vibration above 5.0 typically signals tire or suspension stress. Box if it persists.',
+  aggressive: 'An aggressive strategy means early undercut — pit before rivals to gain clean air and push on fresh rubber.',
+  conservative: 'Conservative strategy: extend stint, protect position, minimize pit stop risk.',
+  summarize: 'No telemetry stream active. Start the simulator to get live race data.',
+};
+      const key = Object.keys(genericAnswers).find(k => lowerPrompt.includes(k));
+      chatAnswer = key ? genericAnswers[key] : `TifosiX AI ready. Start the telemetry simulator for live race intelligence.`;
+    }
+ 
+    // --- 3. Fan messages come from the supervisor result (template-based, correct flow) ---
+    const fanMessages =
+  result?.result?.fan_messages ||
+  (result?.result?.agent_chain || [])
+    .find(a => a.agent === 'FanEngagementAgent')
+    ?.result?.messages ||
+  [];
+  // Command center flow: always generate fan messages (draft if not yet approved)
+let commandCenterFanMessages = fanMessages;
+
+if (commandCenterFanMessages.length === 0 && telemetryEvent) {
+  try {
+    const agentChain = result?.result?.agent_chain || [];
+    const safetyEntry  = agentChain.find(a => a.agent === 'SafetyIntelligenceAgent');
+    const strategyEntry = agentChain.find(a => a.agent === 'StrategyRecommendationAgent');
+    const govEntry = agentChain.find(a => a.agent === 'GovernanceApprovalAgent');
+
+    if (safetyEntry && strategyEntry && govEntry) {
+      const fanResult = await fanEngagementAgent.generateMessage(
+        safetyEntry.result,
+        strategyEntry.result,
+        // Pass a permissive governance object so the agent always runs
+        {
+          approval_record: {
+            blocked: false,
+            approval_status: govEntry.result?.approval_record?.approval_status || 'pending',
+            requires_human_approval: govEntry.result?.approval_record?.requires_human_approval
+          }
+        },
+        telemetryEvent,
+        {
+          languages: ['en', 'it', 'es', 'hi'],
+          source: 'command_center'          // ← tag the source
+        }
+      );
+      commandCenterFanMessages = fanResult?.messages || [];
+    }
+  } catch (fanErr) {
+    console.warn('⚠️ Command center fan message generation failed:', fanErr.message);
   }
-);
+}
 
-fanMessages = fanResult.messages || [];
-
-broadcast('fan_messages', {
-  messages: fanMessages,
-  timestamp: new Date().toISOString(),
-});
-
+broadcast('fan_messages', { messages: commandCenterFanMessages, timestamp: new Date().toISOString() });
 broadcast('agent_response', result);
 
 return res.json({
   success: true,
-  summary:
-    result?.summary ||
-    result?.result?.summary ||
-    'AI workflow completed',
+  chat_answer: chatAnswer,
+  summary: result?.summary || 'AI workflow completed',
   result,
-  fan_messages: fanMessages,
+  fan_messages: commandCenterFanMessages,  // ← use the enriched list
   telemetry_context: telemetryEvent,
 });
-
-  } catch (error) {
-    console.error(
-      '❌ Agent endpoint error:',
-      error
-    );
-
-    return res.status(500).json({
-      success: false,
-      error: error.message,
+    broadcast('fan_messages', { messages: fanMessages, timestamp: new Date().toISOString() });
+    broadcast('agent_response', result);
+ 
+    return res.json({
+      success: true,
+      chat_answer: chatAnswer,          // <-- clean chat answer
+      summary: result?.summary || 'AI workflow completed',
+      result,
+      fan_messages: fanMessages,
+      telemetry_context: telemetryEvent,
     });
+ 
+  } catch (error) {
+    console.error('❌ Agent endpoint error:', error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
  
@@ -393,10 +402,15 @@ const fanResult =
     {
       strategy_id: approvalRecord.strategy_id,
       recommendation: {
-        pit_window: {
-          action: 'immediate_pit_stop'
-        }
-      }
+  user_prompt: 'Generate fan-safe telemetry update after governance approval',
+  direct_answer:
+    'Ferrari has approved a safety-first strategy response. The team is reacting to elevated race risk by preparing a controlled pit call and protecting the driver’s performance for the next stint.',
+  pit_window: {
+    action: 'immediate_pit_stop'
+  },
+  reasoning:
+    'Governance approved the high-risk telemetry response.'
+}
     },
     {
       approval_record: {
@@ -419,9 +433,7 @@ const fanResult =
       'Unknown Team'
   }
 },
-    {
-      languages: ['en', 'es', 'it', 'hi']
-    }
+    { languages: ['en', 'es', 'it', 'hi'], source: 'governance_approval' }
   );
  
       fanMessages = fanResult.messages || [];
@@ -768,22 +780,16 @@ app.get('/health', (req, res) => {
 // Setup telemetry event listener
 
 telemetrySimulator.on('telemetry', async (event) => {
-
   latestTelemetryEvent = event;
 
   console.log(`📡 Telemetry event received: ${event.event_id}`);
- 
-  // Broadcast raw telemetry to WebSocket clients first
 
   broadcast('telemetry', event);
 
-  // Auto-process high-risk events
   if (event.risk_analysis.risk_score >= 60) {
-
     console.log(`🚨 High-risk event detected - auto-processing...`);
 
     try {
-
       broadcast('pipeline_start', {
         event_id: event.event_id,
         vehicle_id: event.vehicle.vehicle_id,
@@ -791,13 +797,15 @@ telemetrySimulator.on('telemetry', async (event) => {
         severity: event.risk_analysis.severity,
       });
 
-      const result =
-        await decisionTwinSupervisorAgent.process(
-          `Telemetry shows ${event.vehicle.vehicle_id}
-          has ${event.risk_analysis.event_type}.
-          Assess safety risk, recommend strategy, and request approval if needed.`,
-          { telemetryEvent: event }
-        );
+      const result = await decisionTwinSupervisorAgent.process(
+        `Telemetry shows ${event.vehicle.vehicle_id}
+        has ${event.risk_analysis.event_type}.
+        Assess safety risk, recommend strategy, and request approval if needed.`,
+        {
+          telemetryEvent: event,
+          languages: ['en', 'it', 'es', 'hi'],
+        }
+      );
 
       broadcast('auto_analysis', result);
 
@@ -805,9 +813,6 @@ telemetrySimulator.on('telemetry', async (event) => {
       console.error('❌ Auto-analysis error:', error);
     }
   }
- 
-  // Auto-process high-risk events
-
 });
  
 // Start server

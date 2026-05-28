@@ -183,6 +183,14 @@ function App() {
   const isSimulatorRunningRef = useRef(false)
   isSimulatorRunningRef.current = isSimulatorRunning
 
+const appendFanMessages = useCallback((newMsgs: any[]) => {
+  setFanMessages(prev => {
+    const existingIds = new Set(prev.map((m: any) => m.message_id));
+    const dedupedNew = newMsgs.filter((m: any) => !existingIds.has(m.message_id));
+    return [...dedupedNew, ...prev].slice(0, 20);
+  });
+}, []);
+
   const initializeStages = useCallback((currentTelemetry: TelemetryEvent | null) => {
     setOrchestrationStages(
       DEFAULT_STAGES.map(s =>
@@ -224,7 +232,14 @@ function App() {
     websocket.onmessage = (event) => {
       const data = JSON.parse(event.data)
 
-      if (!isSimulatorRunningRef.current) return
+if (
+  (data.event === 'telemetry' ||
+    data.event === 'auto_analysis' ||
+    data.event === 'pipeline_start') &&
+  !isSimulatorRunningRef.current
+) {
+  return
+}
 
       if (data.event === 'telemetry') {
         const td: TelemetryEvent = data.data
@@ -272,6 +287,17 @@ function App() {
         const result = data.data
         setResponse(result)
 
+const autoMessage = 
+          result?.chat_answer ||
+          result?.summary ||
+          result?.result?.recommendation?.reasoning ||
+          '⚠️ High-risk telemetry detected. Auto-analysis executed.';
+
+        setChatHistory(prev => [
+          ...prev,
+          { role: 'assistant', message: `[SYSTEM ALERT] ${autoMessage}` }
+        ]);
+
         const agentChain: any[] =
           result?.result?.agent_chain ||
           result?.agent_chain ||
@@ -287,24 +313,28 @@ function App() {
 
       if (data.event === 'fan_messages') {
         const newMessages = (data.data.messages || []).map((msg: any) => ({
-          ...msg,
-          timestamp: data.data.timestamp || new Date().toISOString(),
-          status: 'published'
-        }))
+  ...msg,
+  source: msg.source || 'command_center',
+  timestamp: data.data.timestamp || new Date().toISOString(),
+  status: 'published',
+  delivery_status: msg.delivery_status || 'published'
+}))
 
-        setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
+        appendFanMessages(newMessages)
         setGeneratingFanMessage(false)
       }
 
       if (data.event === 'approval_decision') {
         if (data.data.fan_messages?.length) {
           const newMessages = data.data.fan_messages.map((msg: any) => ({
-            ...msg,
-            timestamp: new Date().toISOString(),
-            status: 'published'
-          }))
+  ...msg,
+  source: msg.source || 'governance_approval',
+  timestamp: new Date().toISOString(),
+  status: 'published',
+  delivery_status: msg.delivery_status || 'published'
+}))
 
-          setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
+          appendFanMessages(newMessages)
         }
 
         setGeneratingFanMessage(false)
@@ -336,6 +366,34 @@ function App() {
    return () => clearInterval(interval)
   }, [isSimulatorRunning])
 
+// const createPromptFanMessages = (userPrompt: string, answer: string) => {
+//   const driverName = telemetry?.vehicle?.driver_name || 'Ferrari Driver'
+//   const timestamp = new Date().toISOString()
+
+//   return [
+//     {
+//       message_id: `prompt_fan_${Date.now()}_en`,
+//       language: 'en',
+//       message_title: `💬 AI Command Center Update`,
+//       message_content: answer || `Fan-safe update generated for: ${userPrompt}`,
+//       emotional_tone: 'informative',
+//       message_type: 'chat_prompt',
+//       timestamp,
+//       status: 'published'
+//     },
+//     {
+//       message_id: `prompt_fan_${Date.now()}_hi`,
+//       language: 'hi',
+//       message_title: `🇮🇳 AI कमांड सेंटर अपडेट`,
+//       message_content: `${driverName} के लिए फैन-सेफ अपडेट तैयार किया गया है: ${answer || userPrompt}`,
+//       emotional_tone: 'fan-friendly',
+//       message_type: 'chat_prompt',
+//       timestamp,
+//       status: 'published'
+//     }
+//   ]
+// }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -363,12 +421,11 @@ function App() {
       setResponse(data)
 
       const assistantMessage =
-        data?.result?.result?.recommendation?.reasoning?.[0]?.description ||
-        data?.result?.result?.recommendation?.pit_window?.reason ||
-        data?.result?.result?.safety_context?.recommendation?.reason ||
-        data?.summary ||
-        data?.result?.summary ||
-        'AI workflow completed'
+  data?.chat_answer ||                                    // ← new clean field
+  data?.fan_messages?.[0]?.message_content ||
+  data?.result?.result?.recommendation?.reasoning ||
+  data?.summary ||
+  'AI workflow completed';
 
       setChatHistory(prev => [
         ...prev,
@@ -388,11 +445,13 @@ function App() {
 if (generatedMessages.length > 0) {
   const formattedMessages = generatedMessages.map((msg: any) => ({
     ...msg,
+    source: msg.source || 'command_center',
     timestamp: new Date().toISOString(),
-    status: 'published'
+    status: 'published',
+    delivery_status: msg.delivery_status || 'published'
   }))
 
-  setFanMessages(prev => [...formattedMessages, ...prev].slice(0, 20))
+  appendFanMessages(formattedMessages)
 }
 
       const agentChain: any[] =
@@ -419,31 +478,38 @@ if (generatedMessages.length > 0) {
         const severity = currentTelemetry?.risk_analysis.severity ?? 'moderate'
 
         const fallbackMap: Record<string, any> = {
-          safety_intelligence: {
-            risk_score: riskScore,
-            severity,
-            anomaly_detected: 'Assessed from telemetry',
-            confidence_score: 0.91,
-          },
-          strategy_recommendation: {
-            recommended_pit_window: 'Lap 25–26',
-            recommended_tire: 'Medium compound',
-            residual_risk: 'Moderate',
-            strategy_reasoning: 'Defensive pit stop recommended.',
-          },
-          governance_approval: {
-            approval_state: riskScore >= 80 ? 'awaiting_human_approval' : 'auto_approved',
-            approval_required: riskScore >= 80,
-            escalation_state: riskScore >= 80 ? 'critical_review' : 'none',
-            approver_name: riskScore >= 80 ? 'Awaiting race engineer approval' : 'System',
-          },
-        }
+  safety_intelligence: {
+    risk_score: riskScore,
+    severity,
+    anomaly_detected: 'Assessed from telemetry',
+    confidence_score: 0.91,
+  },
+  strategy_recommendation: {
+    recommended_pit_window: 'Lap 25–26',
+    recommended_tire: 'Medium compound',
+    residual_risk: 'Moderate',
+    strategy_reasoning: 'Defensive pit stop recommended.',
+  },
+  governance_approval: {
+    approval_state: 'auto_approved',
+    approval_required: false,
+    escalation_state: 'none',
+    approver_name: 'System',
+  },
+  fan_engagement: {
+    fan_narrative: 'Fan-safe race update generated and published.',
+    multilingual_status: 'EN, IT, ES, HI',
+    telemetry_redaction: true,
+    publication_timestamp: new Date().toISOString(),
+  },
+}
 
-        const fallbackStageIds = [
-          'safety_intelligence',
-          'strategy_recommendation',
-          'governance_approval'
-        ]
+    const fallbackStageIds = [
+  'safety_intelligence',
+  'strategy_recommendation',
+  'governance_approval',
+  'fan_engagement'
+]
 
         fallbackStageIds.forEach((id, i) => {
           setTimeout(() => {
@@ -563,12 +629,14 @@ if (generatedMessages.length > 0) {
 
         if (backendMessages.length > 0) {
           const newMessages = backendMessages.map((msg: any) => ({
-            ...msg,
-            timestamp: new Date().toISOString(),
-            status: 'published'
-          }))
+  ...msg,
+  source: msg.source || 'governance_approval',
+  timestamp: new Date().toISOString(),
+  status: 'published',
+  delivery_status: msg.delivery_status || 'published'
+}))
 
-          setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
+          appendFanMessages(newMessages)
         } else {
           const approval = pendingApprovals.find(a => a.approval_id === approvalId)
           const driverName = approval?.vehicle?.driver_name || telemetry?.vehicle?.driver_name || 'the driver'
@@ -576,9 +644,11 @@ if (generatedMessages.length > 0) {
 
           const fallbackMessages = [
             {
-              message_id: `fan_${Date.now()}_en_1`,
-              language: 'en',
-              message_title: '🚨 Ferrari Strategy Alert',
+               message_id: `fan_${Date.now()}_en_1`,
+  language: 'en',
+  source: 'governance_approval',
+  delivery_status: 'published',
+  message_title: '🚨 Ferrari Strategy Alert',
               message_content: `Ferrari calls ${driverName} into the pits after signs of elevated tire stress.`,
               emotional_tone: 'urgent',
               timestamp,
@@ -587,6 +657,8 @@ if (generatedMessages.length > 0) {
             {
               message_id: `fan_${Date.now()}_it_1`,
               language: 'it',
+              source: 'governance_approval',
+  delivery_status: 'published',
               message_title: '🇮🇹 Aggiornamento Ferrari',
               message_content: `Ferrari richiama ${driverName} ai box dopo segnali di stress elevato sugli pneumatici.`,
               emotional_tone: 'dramatic',
@@ -596,6 +668,8 @@ if (generatedMessages.length > 0) {
             {
               message_id: `fan_${Date.now()}_es_1`,
               language: 'es',
+              source: 'governance_approval',
+  delivery_status: 'published',
               message_title: '🇪🇸 Alerta Estratégica Ferrari',
               message_content: `Ferrari llama a ${driverName} a boxes tras señales de estrés elevado en los neumáticos.`,
               emotional_tone: 'strategic',
@@ -605,6 +679,8 @@ if (generatedMessages.length > 0) {
             {
               message_id: `fan_${Date.now()}_hi_1`,
               language: 'hi',
+              source: 'governance_approval',
+  delivery_status: 'published',
               message_title: '🇮🇳 Ferrari अपडेट',
               message_content: `Ferrari ${driverName} को पिट में बुला रही है टायर स्ट्रेस के संकेतों के बाद।`,
               emotional_tone: 'fan-friendly',
@@ -613,7 +689,7 @@ if (generatedMessages.length > 0) {
             },
           ]
 
-          setFanMessages(prev => [...fallbackMessages, ...prev].slice(0, 20))
+          appendFanMessages(fallbackMessages)
         }
 
         setOrchestrationStages(prev =>
@@ -851,7 +927,12 @@ if (generatedMessages.length > 0) {
                   <Shield className="w-4 h-4 text-ferrari-red" />
                   <span className="text-sm font-semibold">Governance Active</span>
                 </div>
-                <button onClick={generateCritical} className="px-4 py-2 bg-gradient-to-r from-red-600 to-red-800 text-white rounded-lg text-sm font-semibold" > Generate Critical Event </button>
+                <button
+  onClick={generateCritical}
+  className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-gradient-to-r from-ferrari-red to-red-800 border border-red-500 shadow-[0_0_18px_rgba(220,0,0,0.45)] hover:scale-[1.02] transition-all"
+>
+  Generate Critical Event
+</button>
               </div>
             </div>
           </header>
@@ -878,7 +959,7 @@ if (generatedMessages.length > 0) {
 
                 <button
                   type="submit"
-                  disabled={loading || !prompt.trim() || !isSimulatorRunning || !wsConnected || !telemetry}
+                  disabled={loading || !prompt.trim() || !isSimulatorRunning || !wsConnected}
                   className="group relative w-full overflow-hidden rounded-2xl border border-ferrari-red/30 bg-gradient-to-r from-ferrari-red via-red-700 to-red-900 px-8 py-5 text-lg font-black tracking-wide text-white shadow-[0_0_25px_rgba(220,0,0,0.35)] transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_0_45px_rgba(220,0,0,0.65)] hover:border-ferrari-red/80 active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                 >
                   <div className="relative z-10 flex items-center justify-center gap-3">
@@ -1077,12 +1158,32 @@ if (generatedMessages.length > 0) {
                                 {msg.message_title || msg.title || 'Fan Race Update'}
                               </div>
                               <div className="text-xs text-gray-500">
-                                {msg.emotional_tone || 'strategic'}
-                              </div>
+  {msg.emotional_tone || 'strategic'}
+</div>
+
+{msg.delivery_status === 'draft' && (
+  <span className="text-xs text-yellow-500/70 mt-1 block">
+    ⏳ Pending approval
+  </span>
+)}
                             </div>
-                            <span className="shrink-0 text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-300 border border-red-500/20">
-                              {(msg.language || 'en').toUpperCase()}
-                            </span>
+                            <div className="flex items-center gap-2 shrink-0">
+  {msg.source && (
+    <span
+      className={`text-xs px-2 py-1 rounded-full border ${
+        msg.source === 'governance_approval'
+          ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/20'
+          : 'bg-blue-500/20 text-blue-300 border-blue-500/20'
+      }`}
+    >
+      {msg.source === 'governance_approval' ? 'GOV' : 'CMD'}
+    </span>
+  )}
+
+  <span className="text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-300 border border-red-500/20">
+    {(msg.language || 'en').toUpperCase()}
+  </span>
+</div>
                           </div>
 
                           <p className="text-sm text-gray-300 leading-relaxed">
@@ -1217,3 +1318,5 @@ function StageCard({ stage, getRiskColor }: { stage: OrchestrationStage; getRisk
 }
 
 export default App
+
+// Made with Bob
