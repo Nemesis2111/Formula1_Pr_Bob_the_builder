@@ -381,7 +381,12 @@ export class FanEngagementAgent {
       const { risk_score, severity } = safetyAnalysis.analysis;
       const { recommendation } = strategyRecommendation;
 
-      const messageType = this.determineMessageType(risk_score, severity, recommendation);
+      const messageType = this.determineMessageType(
+  risk_score,
+  severity,
+  recommendation,
+  recommendation?.user_prompt || recommendation?.fan_instruction || ''
+);
 
       const messages = this.generateMultilingualMessages(
         messageType,
@@ -437,27 +442,55 @@ export class FanEngagementAgent {
     }
   }
 
-  determineMessageType(riskScore, severity, recommendation) {
-    const action = recommendation?.pit_window?.action;
+  determineMessageType(riskScore, severity, recommendation, userPrompt = '') {
+  const action = recommendation?.pit_window?.action;
+  const prompt = userPrompt.toLowerCase();
 
-    if (riskScore >= 80 || severity === 'critical') {
-      return 'critical_pit';
-    }
-
-    if (action === 'pit_next_window') {
-      return 'strategy_change';
-    }
-
-    if (action === 'immediate_pit_stop') {
-      return 'critical_pit';
-    }
-
-    if (riskScore >= 40) {
-      return 'tire_management';
-    }
-
-    return 'normal_pit';
+  if (
+    prompt.includes('pit') ||
+    prompt.includes('box') ||
+    prompt.includes('stop')
+  ) {
+    return riskScore >= 70 ? 'critical_pit' : 'normal_pit';
   }
+
+  if (
+    prompt.includes('strategy') ||
+    prompt.includes('aggressive') ||
+    prompt.includes('conservative') ||
+    prompt.includes('recommend')
+  ) {
+    return 'strategy_change';
+  }
+
+  if (
+    prompt.includes('tire') ||
+    prompt.includes('tyre') ||
+    prompt.includes('degradation') ||
+    prompt.includes('wear') ||
+    prompt.includes('vibration')
+  ) {
+    return 'tire_management';
+  }
+
+  if (riskScore >= 80 || severity === 'critical') {
+    return 'critical_pit';
+  }
+
+  if (action === 'pit_next_window') {
+    return 'strategy_change';
+  }
+
+  if (action === 'immediate_pit_stop') {
+    return 'critical_pit';
+  }
+
+  if (riskScore >= 40) {
+    return 'tire_management';
+  }
+
+  return 'normal_pit';
+}
 
   generateMultilingualMessages(messageType, vehicle, recommendation, languages) {
     return languages.map((lang, index) => {

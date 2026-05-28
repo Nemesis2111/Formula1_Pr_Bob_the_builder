@@ -1,5 +1,5 @@
 import ibmLogo from './assets/IBM-LOGO.png'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity, Zap, Shield, Target, Users, AlertTriangle,
@@ -10,6 +10,8 @@ import {
   AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip
 } from 'recharts'
 import RaceTrackVisualization from './components/RaceTrackVisualization'
+import './App.css'
+
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
 interface TelemetryEvent {
@@ -48,54 +50,47 @@ interface OrchestrationStage {
   data?: any
 }
 
-// ---------------------------------------------------------------------------
-// Helper: extract per-agent display data from the agent_chain array returned
-// by the backend. Keeps all stage-data logic in one place.
-// ---------------------------------------------------------------------------
 function buildAgentDataMap(agentChain: any[]): Record<string, any> {
   const map: Record<string, any> = {}
 
   agentChain.forEach((entry: any) => {
     if (entry.agent === 'SafetyIntelligenceAgent') {
       map['safety_intelligence'] = {
-        risk_score:        entry.result?.analysis?.risk_score,
-        severity:          entry.result?.analysis?.severity,
-        anomaly_detected:  entry.result?.analysis?.anomaly_detected || 'Assessed',
-        confidence_score:  entry.result?.analysis?.confidence_score,
+        risk_score: entry.result?.analysis?.risk_score,
+        severity: entry.result?.analysis?.severity,
+        anomaly_detected: entry.result?.analysis?.anomaly_detected || 'Assessed',
+        confidence_score: entry.result?.analysis?.confidence_score,
       }
     }
-
+    
     if (entry.agent === 'StrategyRecommendationAgent') {
       map['strategy_recommendation'] = {
         recommended_pit_window: entry.result?.recommendation?.pit_window || 'Calculated',
-        recommended_tire:       entry.result?.recommendation?.compound   || 'Medium compound',
-        residual_risk:          entry.result?.recommendation?.residual_risk || 'Moderate',
-        strategy_reasoning:     entry.result?.recommendation?.reasoning  || 'Immediate defensive pit stop recommended.',
+        recommended_tire: entry.result?.recommendation?.compound || 'Medium compound',
+        residual_risk: entry.result?.recommendation?.residual_risk || 'Moderate',
+        strategy_reasoning: entry.result?.recommendation?.reasoning || 'Immediate defensive pit stop recommended.',
       }
     }
 
     if (entry.agent === 'GovernanceApprovalAgent') {
-  const rec = entry.result?.approval_record
-
-  map['governance_approval'] = {
-    approval_state: rec?.approval_status,
-    approval_required: rec?.requires_human_approval,
-    escalation_state: rec?.requires_human_approval
-      ? 'critical_review'
-      : 'none',
-    approver_name: rec?.requires_human_approval
-      ? 'Awaiting race engineer approval'
-      : 'System (auto-approved)',
-  }
-}
+      const rec = entry.result?.approval_record
+      map['governance_approval'] = {
+        approval_state: rec?.approval_status,
+        approval_required: rec?.requires_human_approval,
+        escalation_state: rec?.requires_human_approval ? 'critical_review' : 'none',
+        approver_name: rec?.requires_human_approval
+          ? 'Awaiting race engineer approval'
+          : 'System (auto-approved)',
+      }
+    }
 
     if (entry.agent === 'FanEngagementAgent') {
       map['fan_engagement'] = {
-        fan_narrative:         entry.result?.messages
-                                 ? 'Fan-safe race update generated and published.'
-                                 : 'Pending approval — narrative staged.',
-        multilingual_status:   'EN, IT, ES, HI',
-        telemetry_redaction:   true,
+        fan_narrative: entry.result?.messages
+          ? 'Fan-safe race update generated and published.'
+          : 'Pending approval — narrative staged.',
+        multilingual_status: 'EN, IT, ES, HI',
+        telemetry_redaction: true,
         publication_timestamp: new Date().toISOString(),
       }
     }
@@ -104,49 +99,72 @@ function buildAgentDataMap(agentChain: any[]): Record<string, any> {
   return map
 }
 
-// ---------------------------------------------------------------------------
-// Helper: animate stages sequentially using real agent_chain data
-// ---------------------------------------------------------------------------
 function animatePipeline(
   agentChain: any[],
-  setOrchestrationStages: React.Dispatch<React.SetStateAction<OrchestrationStage[]>>
+  setOrchestrationStages: React.Dispatch<React.SetStateAction<OrchestrationStage[]>>,
+  includeFanEngagement = false
 ) {
-  const stageIds = [
-    'safety_intelligence',
-    'strategy_recommendation',
-    'governance_approval',
-  ]
+  const stageIds = includeFanEngagement
+    ? [
+        'safety_intelligence',
+        'strategy_recommendation',
+        'fan_engagement',
+      ]
+    : [
+        'safety_intelligence',
+        'strategy_recommendation',
+        'governance_approval',
+      ]
 
   const dataMap = buildAgentDataMap(agentChain)
 
+  if (includeFanEngagement) {
+    dataMap['fan_engagement'] = {
+      fan_narrative: 'Fan-safe race update generated and published.',
+      multilingual_status: 'EN, IT, ES, HI',
+      telemetry_redaction: true,
+      publication_timestamp: new Date().toISOString(),
+    }
+  }
+
   stageIds.forEach((id, i) => {
-    const runAt      = (i + 1) * 800
+    const runAt = (i + 1) * 800
     const completeAt = runAt + 600
 
     setTimeout(() => {
       setOrchestrationStages(prev =>
-        prev.map(s => s.id === id
-          ? { ...s, status: 'running', timestamp: new Date().toISOString() }
-          : s
+        prev.map(s =>
+          s.id === id
+            ? { ...s, status: 'running', timestamp: new Date().toISOString() }
+            : s
         )
       )
     }, runAt)
 
     setTimeout(() => {
       setOrchestrationStages(prev =>
-        prev.map(s => s.id === id
-          ? {
-              ...s,
-              status: dataMap[id] ? 'complete' : 'pending',
-              timestamp: new Date().toISOString(),
-              data: dataMap[id] || s.data,
-            }
-          : s
+        prev.map(s =>
+          s.id === id
+            ? {
+                ...s,
+                status: 'complete',
+                timestamp: new Date().toISOString(),
+                data: dataMap[id] || {},
+              }
+            : s
         )
       )
     }, completeAt)
   })
 }
+
+const DEFAULT_STAGES: OrchestrationStage[] = [
+  { id: 'telemetry_received', name: 'Telemetry Received', status: 'pending', data: {} },
+  { id: 'safety_intelligence', name: 'Safety Intelligence Agent', status: 'pending', data: {} },
+  { id: 'strategy_recommendation', name: 'Strategy Recommendation Agent', status: 'pending', data: {} },
+  { id: 'governance_approval', name: 'Governance Approval Agent', status: 'pending', data: {} },
+ { id: 'fan_engagement', name: 'Fan Engagement Agent', status: 'pending', data: {} },
+]
 
 function App() {
   const [prompt, setPrompt] = useState('')
@@ -155,60 +173,59 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [telemetry, setTelemetry] = useState<TelemetryEvent | null>(null)
   const [telemetryHistory, setTelemetryHistory] = useState<any[]>([])
-  const [ws, setWs] = useState<WebSocket | null>(null)
+  const [wsConnected, setWsConnected] = useState(false)
   const [orchestrationStages, setOrchestrationStages] = useState<OrchestrationStage[]>([])
   const [isSimulatorRunning, setIsSimulatorRunning] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([])
   const [fanMessages, setFanMessages] = useState<any[]>([])
   const [generatingFanMessage, setGeneratingFanMessage] = useState(false)
 
-  // ---------------------------------------------------------------------------
-  // Initialise 5-stage pipeline scaffold (called before any agent run)
-  // ---------------------------------------------------------------------------
+  const isSimulatorRunningRef = useRef(false)
+  isSimulatorRunningRef.current = isSimulatorRunning
+
   const initializeStages = useCallback((currentTelemetry: TelemetryEvent | null) => {
-    setOrchestrationStages([
-      {
-        id: 'telemetry_received',
-        name: 'Telemetry Received',
-        status: currentTelemetry ? 'complete' : 'running',
-        timestamp: new Date().toISOString(),
-        data: currentTelemetry ? {
-          vehicle_id:         currentTelemetry.vehicle.vehicle_id,
-          steering_vibration: currentTelemetry.vehicle.steering_vibration,
-          tire_wear:          currentTelemetry.vehicle.tire_wear_percent,
-          track_temperature:  currentTelemetry.track_environment.track_temperature,
-        } : {}
-      },
-   { id: 'safety_intelligence',     name: 'Safety Intelligence Agent',     status: 'pending', data: {} },
-{ id: 'strategy_recommendation', name: 'Strategy Recommendation Agent', status: 'pending', data: {} },
-{ id: 'governance_approval',     name: 'Governance Approval Agent',     status: 'pending', data: {} },
-
-
-
-{ id: 'fan_engagement',          name: 'Fan Engagement Agent',          status: 'pending', data: {} },
-
-    ])
+    setOrchestrationStages(
+      DEFAULT_STAGES.map(s =>
+        s.id === 'telemetry_received'
+          ? {
+              ...s,
+              status: currentTelemetry ? 'complete' : 'running',
+              timestamp: new Date().toISOString(),
+              data: currentTelemetry ? {
+                vehicle_id: currentTelemetry.vehicle.vehicle_id,
+                steering_vibration: currentTelemetry.vehicle.steering_vibration,
+                tire_wear: currentTelemetry.vehicle.tire_wear_percent,
+                track_temperature: currentTelemetry.track_environment.track_temperature,
+              } : {}
+            }
+          : s
+      )
+    )
   }, [])
 
-  // ---------------------------------------------------------------------------
-  // WebSocket
-  // ---------------------------------------------------------------------------
   useEffect(() => {
-    const websocket = new WebSocket(
-      import.meta.env.VITE_WS_URL || `ws://${window.location.host}/ws`
-    )
+    const wsUrl = import.meta.env.VITE_WS_URL || `ws://${window.location.host}/ws`
+    const websocket = new WebSocket(wsUrl)
 
     websocket.onopen = () => {
-      console.log('Connected to TifosiX AI')
+      console.log('✅ WebSocket connected')
+      setWsConnected(true)
+    }
+
+    websocket.onclose = () => {
+      console.log('🔌 WebSocket closed')
+      setWsConnected(false)
+    }
+
+    websocket.onerror = () => {
+      setWsConnected(false)
     }
 
     websocket.onmessage = (event) => {
       const data = JSON.parse(event.data)
 
-      if (!isSimulatorRunning) {
-  return
-}
-      // ── Raw telemetry stream ────────────────────────────────────────────────
+      if (!isSimulatorRunningRef.current) return
+
       if (data.event === 'telemetry') {
         const td: TelemetryEvent = data.data
         setTelemetry(td)
@@ -216,14 +233,13 @@ function App() {
         setTelemetryHistory(prev => [
           ...prev.slice(-20),
           {
-            lap:  td.lap,
+            lap: td.lap,
             risk: td.risk_analysis.risk_score,
             tire: td.vehicle.tire_wear_percent,
             temp: td.vehicle.engine_temperature,
           }
         ])
 
-        // Keep the telemetry_received stage in sync
         setOrchestrationStages(prev => {
           const stage: OrchestrationStage = {
             id: 'telemetry_received',
@@ -231,23 +247,20 @@ function App() {
             status: 'complete',
             timestamp: new Date().toISOString(),
             data: {
-              vehicle_id:         td.vehicle.vehicle_id,
+              vehicle_id: td.vehicle.vehicle_id,
               steering_vibration: td.vehicle.steering_vibration,
-              tire_wear:          td.vehicle.tire_wear_percent,
-              track_temperature:  td.track_environment.track_temperature,
+              tire_wear: td.vehicle.tire_wear_percent,
+              track_temperature: td.track_environment.track_temperature,
             }
           }
 
           const exists = prev.some(s => s.id === 'telemetry_received')
           return exists
             ? prev.map(s => s.id === 'telemetry_received' ? stage : s)
-            : [stage, ...prev]
+            : [stage, ...DEFAULT_STAGES.filter(s => s.id !== 'telemetry_received')]
         })
       }
 
-      // ── Pipeline started (server is about to call agents) ──────────────────
-      // Initialise all 5 stage cards immediately so the user sees the pipeline
-      // scaffold before the agents finish running.
       if (data.event === 'pipeline_start') {
         setTelemetry(prev => {
           initializeStages(prev)
@@ -255,49 +268,34 @@ function App() {
         })
       }
 
-      // ── Full auto-analysis result (all agents finished) ────────────────────
-      // This is the PRIMARY handler for telemetry-triggered workflows.
-      // It drives the stage-card animation with real data from agent_chain.
       if (data.event === 'auto_analysis') {
         const result = data.data
         setResponse(result)
 
         const agentChain: any[] =
-  result?.result?.agent_chain ||
-  result?.agent_chain ||
-  []
+          result?.result?.agent_chain ||
+          result?.agent_chain ||
+          []
 
-        // Make sure the pipeline scaffold exists before animating
-        setOrchestrationStages(prev => {
-          if (prev.length === 0) {
-            return [
-              { id: 'telemetry_received',      name: 'Telemetry Received',           status: 'complete', timestamp: new Date().toISOString(), data: {} },
-              { id: 'safety_intelligence',     name: 'Safety Intelligence Agent',    status: 'pending',  data: {} },
-              { id: 'strategy_recommendation', name: 'Strategy Recommendation Agent',status: 'pending',  data: {} },
-              { id: 'governance_approval',     name: 'Governance Approval Agent',    status: 'pending',  data: {} },
-              { id: 'governance_console',      name: 'Governance Console', status: 'pending', data: {} },
-              { id: 'fan_engagement',          name: 'Fan Engagement Agent',         status: 'pending',  data: {} },
-            ]
-          }
-          return prev
-        })
+        setOrchestrationStages(prev =>
+          prev.length === 0 ? [...DEFAULT_STAGES] : prev
+        )
 
-        // Animate each stage card sequentially with real agent data
-        animatePipeline(agentChain, setOrchestrationStages)
-      }
+        animatePipeline(agentChain, setOrchestrationStages, false)
+        
+              }
 
-      // ── Fan messages (from approval or auto-generation) ────────────────────
       if (data.event === 'fan_messages') {
-        const newMessages = data.data.messages.map((msg: any) => ({
+        const newMessages = (data.data.messages || []).map((msg: any) => ({
           ...msg,
           timestamp: data.data.timestamp || new Date().toISOString(),
           status: 'published'
         }))
+
         setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
         setGeneratingFanMessage(false)
       }
 
-      // ── Approval decision (may include fan messages) ───────────────────────
       if (data.event === 'approval_decision') {
         if (data.data.fan_messages?.length) {
           const newMessages = data.data.fan_messages.map((msg: any) => ({
@@ -305,55 +303,47 @@ function App() {
             timestamp: new Date().toISOString(),
             status: 'published'
           }))
+
           setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
         }
+
         setGeneratingFanMessage(false)
       }
     }
 
-    setWs(websocket)
     return () => websocket.close()
-  }, []) //[initializeStages,isSimulatorRunning])
+  }, [])
 
-  // ---------------------------------------------------------------------------
-  // Poll governance approvals every 5 s
-  // ---------------------------------------------------------------------------
   useEffect(() => {
-  const fetchApprovals = async () => {
-    try {
-      const res = await fetch(`${API_URL}/governance/approvals`)
-      const data = await res.json()
-
-      if (data.success) {
-        setPendingApprovals(data.approvals)
-      }
-    } catch (error) {
-      console.error('Error fetching approvals:', error)
+    if (!isSimulatorRunning) {
+      setPendingApprovals([])
+      return
     }
-  }
 
-  // Only fetch approvals when simulator is running
-  if (isSimulatorRunning) {
-    fetchApprovals()
+    const fetchApprovals = async () => {
+      try {
+        const res = await fetch(`${API_URL}/governance/approvals`)
+        const data = await res.json()
+        if (data.success) setPendingApprovals(data.approvals)
+      } catch (error) {
+        console.error('Error fetching approvals:', error)
+      }
+    }
 
-    const interval = setInterval(fetchApprovals, 15000)
+   // fetchApprovals()
+    const interval = setInterval(fetchApprovals, 8000)
 
-    return () => clearInterval(interval)
-  } else {
-    // Clear everything when stopped or refreshed
-    setPendingApprovals([])
-  }
-}, [isSimulatorRunning])
+   return () => clearInterval(interval)
+  }, [isSimulatorRunning])
 
-  // ---------------------------------------------------------------------------
-  // Manual prompt submission
-  // ---------------------------------------------------------------------------
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (!prompt.trim()) return
+
     setLoading(true)
     setResponse(null)
 
-    // Capture telemetry snapshot for closure
     const currentTelemetry = telemetry
     initializeStages(currentTelemetry)
 
@@ -370,172 +360,156 @@ function App() {
       })
 
       const data = await res.json()
+      setResponse(data)
 
-setResponse(data)
+      const assistantMessage =
+        data?.result?.result?.recommendation?.reasoning?.[0]?.description ||
+        data?.result?.result?.recommendation?.pit_window?.reason ||
+        data?.result?.result?.safety_context?.recommendation?.reason ||
+        data?.summary ||
+        data?.result?.summary ||
+        'AI workflow completed'
 
-setChatHistory(prev => [
-  ...prev,
-  {
-    role: 'user',
-    message: prompt
-  },
-  {
-    role: 'assistant',
-   message:
-  data?.result?.result?.recommendation?.reasoning?.[0]
-    ?.description ||
+      setChatHistory(prev => [
+        ...prev,
+        { role: 'user', message: prompt },
+        { role: 'assistant', message: assistantMessage }
+      ])
 
-  data?.result?.result?.recommendation
-    ?.pit_window?.reason ||
+      setPrompt('')
 
-  data?.result?.result?.safety_context
-    ?.recommendation?.reason ||
-
-  data?.summary ||
-
-  'AI workflow completed'
-  }
-])
-
-// Automatically load fan messages
-// Automatically load fan messages
-if (
-  data?.result?.fan_messages?.length
-) {
-  const newMessages =
-    data.result.fan_messages.map( 
-      (msg: any) => ({
-        ...msg,
-        timestamp:
-          new Date().toISOString(),
-        status: 'published'
-      })
-    )
-
-  setFanMessages(prev =>
-    [...newMessages, ...prev].slice(0, 20)
-  )
-}
-
-setPrompt('')
-
-      // Animate pipeline using real agent_chain from response
-      const agentChain: any[] =
-  data?.result?.result?.agent_chain ||
-  data?.result?.agent_chain ||
+      const generatedMessages =
+  data?.fan_messages ||
+  data?.messages ||
+  data?.result?.fan_messages ||
+  data?.result?.messages ||
   []
 
+if (generatedMessages.length > 0) {
+  const formattedMessages = generatedMessages.map((msg: any) => ({
+    ...msg,
+    timestamp: new Date().toISOString(),
+    status: 'published'
+  }))
+
+  setFanMessages(prev => [...formattedMessages, ...prev].slice(0, 20))
+}
+
+      const agentChain: any[] =
+        data?.result?.result?.agent_chain ||
+        data?.result?.agent_chain ||
+        []
+
       if (agentChain.length > 0) {
-        // Real data path — drive animation from actual agent results
-        animatePipeline(agentChain, setOrchestrationStages)
+        animatePipeline(agentChain, setOrchestrationStages, true)
+//         setTimeout(() => {
+//   fetch(`${API_URL}/governance/approvals`)
+//     .then(res => res.json())
+//     .then(data => {
+//       if (data.success) {
+//         setPendingApprovals(data.approvals)
+//       }
+//     })
+//     .catch(error => {
+//       console.error('Error fetching approvals:', error)
+//     })
+// }, 3200)
       } else {
-        // Fallback path — backend returned no agent_chain (e.g. generic query)
-        // Show deterministic stages based on available telemetry
-        const riskScore = currentTelemetry?.risk_analysis.risk_score ?? 91
-        const severity  = currentTelemetry?.risk_analysis.severity   ?? 'critical'
+        const riskScore = currentTelemetry?.risk_analysis.risk_score ?? 50
+        const severity = currentTelemetry?.risk_analysis.severity ?? 'moderate'
 
         const fallbackMap: Record<string, any> = {
           safety_intelligence: {
-            risk_score:        riskScore,
+            risk_score: riskScore,
             severity,
-            anomaly_detected:  'Front-left tire vibration risk detected',
-            confidence_score:  0.94,
+            anomaly_detected: 'Assessed from telemetry',
+            confidence_score: 0.91,
           },
           strategy_recommendation: {
             recommended_pit_window: 'Lap 25–26',
-            recommended_tire:       'Medium compound',
-            residual_risk:          'Moderate',
-            strategy_reasoning:     'Immediate defensive pit stop recommended.',
+            recommended_tire: 'Medium compound',
+            residual_risk: 'Moderate',
+            strategy_reasoning: 'Defensive pit stop recommended.',
           },
           governance_approval: {
-            approval_state:    riskScore >= 80 ? 'awaiting_human_approval' : 'auto_approved',
+            approval_state: riskScore >= 80 ? 'awaiting_human_approval' : 'auto_approved',
             approval_required: riskScore >= 80,
-            escalation_state:  riskScore >= 80 ? 'critical_review' : 'none',
-            approver_name:     riskScore >= 80 ? 'Awaiting race engineer approval' : 'System',
+            escalation_state: riskScore >= 80 ? 'critical_review' : 'none',
+            approver_name: riskScore >= 80 ? 'Awaiting race engineer approval' : 'System',
           },
         }
 
-        const stageIds = [
-  'safety_intelligence',
-  'strategy_recommendation',
-  'governance_approval',
-  'governance_console',
-]
-        stageIds.forEach((id, i) => {
+        const fallbackStageIds = [
+          'safety_intelligence',
+          'strategy_recommendation',
+          'governance_approval'
+        ]
+
+        fallbackStageIds.forEach((id, i) => {
           setTimeout(() => {
             setOrchestrationStages(prev =>
-              prev.map(s => s.id === id ? { ...s, status: 'running', timestamp: new Date().toISOString() } : s)
+              prev.map(s =>
+                s.id === id
+                  ? { ...s, status: 'running', timestamp: new Date().toISOString() }
+                  : s
+              )
             )
           }, (i + 1) * 800)
 
           setTimeout(() => {
             setOrchestrationStages(prev =>
-              prev.map(s => s.id === id
-                ? { ...s, status: 'complete', timestamp: new Date().toISOString(), data: fallbackMap[id] || {} }
-                : s
+              prev.map(s =>
+                s.id === id
+                  ? {
+                      ...s,
+                      status: 'complete',
+                      timestamp: new Date().toISOString(),
+                      data: fallbackMap[id] || {}
+                    }
+                  : s
               )
             )
           }, (i + 1) * 800 + 600)
         })
       }
-
     } catch (error) {
       console.error('Error:', error)
       setResponse({ success: false, error: 'Failed to connect to backend' })
       setOrchestrationStages(prev =>
-        prev.map(stage => stage.status === 'running' ? { ...stage, status: 'error' } : stage)
+        prev.map(stage =>
+          stage.status === 'running'
+            ? { ...stage, status: 'error' }
+            : stage
+        )
       )
     } finally {
       setLoading(false)
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Simulator controls
-  // ---------------------------------------------------------------------------
   const toggleSimulator = async () => {
-  try {
-    if (isSimulatorRunning) {
-      await fetch(`${API_URL}/telemetry/stop`, {
-        method: 'POST'
-      })
-      setPendingApprovals([])
-
-      setIsSimulatorRunning(false)
-
-      // Clear telemetry
-      setTelemetry(null)
-      setTelemetryHistory([]) // or setTelemetryHistory([]) if you want to clear history too
-
-      // Clear AI pipeline
-      setOrchestrationStages([])
-
-      // Clear governance
-      setPendingApprovals([])
-
-      // Clear fan engagement
-      setFanMessages([])
-      setGeneratingFanMessage(false)
-
-      // Clear AI responses
-      setResponse(null)
-
-      // Clear chat history (optional)
-      setChatHistory([])
-
-    } else {
-  await fetch(`${API_URL}/telemetry/start`, {
-    method: 'POST'
-  })
-      setIsSimulatorRunning(true)
-
-      // Reset pipeline scaffold
-      initializeStages(null)
+    try {
+      if (isSimulatorRunning) {
+        await fetch(`${API_URL}/telemetry/stop`, { method: 'POST' })
+        setIsSimulatorRunning(false)
+        setTelemetry(null)
+        setTelemetryHistory([])
+        setOrchestrationStages([])
+        setPendingApprovals([])
+        setFanMessages([])
+        setGeneratingFanMessage(false)
+        setResponse(null)
+        setChatHistory([])
+      } else {
+        await fetch(`${API_URL}/telemetry/start`, { method: 'POST' })
+        setIsSimulatorRunning(true)
+        initializeStages(null)
+      }
+    } catch (error) {
+      console.error('Error toggling simulator:', error)
     }
-  } catch (error) {
-    console.error('Error toggling simulator:', error)
   }
-}
+
   const generateCritical = async () => {
     try {
       await fetch(`${API_URL}/telemetry/critical`, { method: 'POST' })
@@ -543,10 +517,8 @@ setPrompt('')
       console.error('Error generating critical event:', error)
     }
   }
+ 
 
-  // ---------------------------------------------------------------------------
-  // Approval handler
-  // ---------------------------------------------------------------------------
   const handleApproval = async (approvalId: string, action: string) => {
     try {
       if (action === 'approve') setGeneratingFanMessage(true)
@@ -566,38 +538,27 @@ setPrompt('')
       })
 
       const data = await res.json()
-      setPendingApprovals(prev => prev.filter(a => a.approval_id !== approvalId))
+
+      setPendingApprovals(prev =>
+        prev.filter(a => a.approval_id !== approvalId)
+      )
 
       if (action === 'approve') {
         setOrchestrationStages(prev =>
-  prev.map(stage => {
+          prev.map(stage => {
+            if (stage.id === 'fan_engagement') {
+              return {
+                ...stage,
+                status: 'running',
+                timestamp: new Date().toISOString(),
+                data: { status: 'Generating multilingual narratives' }
+              }
+            }
 
-    if (stage.id === 'governance_console') {
-      return {
-        ...stage,
-        status: 'complete',
-        timestamp: new Date().toISOString(),
-        data: {
-          decision: 'Approved',
-          approver: 'Marco Bellini'
-        }
-      }
-    }
+            return stage
+          })
+        )
 
-    if (stage.id === 'fan_engagement') {
-      return {
-        ...stage,
-        status: 'running',
-        timestamp: new Date().toISOString(),
-        data: {
-          status: 'Generating multilingual narratives'
-        }
-      }
-    }
-
-    return stage
-  })
-)
         const backendMessages = data.fan_messages || data.messages || []
 
         if (backendMessages.length > 0) {
@@ -606,15 +567,11 @@ setPrompt('')
             timestamp: new Date().toISOString(),
             status: 'published'
           }))
+
           setFanMessages(prev => [...newMessages, ...prev].slice(0, 20))
         } else {
-          // Fallback fan messages when backend returns none
           const approval = pendingApprovals.find(a => a.approval_id === approvalId)
-          const driverName =
-            approval?.vehicle?.driver_name ||
-            telemetry?.vehicle?.driver_name ||
-            'the Ferrari driver'
-
+          const driverName = approval?.vehicle?.driver_name || telemetry?.vehicle?.driver_name || 'the driver'
           const timestamp = new Date().toISOString()
 
           const fallbackMessages = [
@@ -622,7 +579,7 @@ setPrompt('')
               message_id: `fan_${Date.now()}_en_1`,
               language: 'en',
               message_title: '🚨 Ferrari Strategy Alert',
-              message_content: `Ferrari calls ${driverName} into the pits after signs of elevated tire stress. The team is moving quickly to protect the race.`,
+              message_content: `Ferrari calls ${driverName} into the pits after signs of elevated tire stress.`,
               emotional_tone: 'urgent',
               timestamp,
               status: 'published'
@@ -631,7 +588,7 @@ setPrompt('')
               message_id: `fan_${Date.now()}_it_1`,
               language: 'it',
               message_title: '🇮🇹 Aggiornamento Ferrari',
-              message_content: `Ferrari richiama ${driverName} ai box dopo segnali di stress elevato sugli pneumatici. La Scuderia reagisce rapidamente per proteggere la gara.`,
+              message_content: `Ferrari richiama ${driverName} ai box dopo segnali di stress elevato sugli pneumatici.`,
               emotional_tone: 'dramatic',
               timestamp,
               status: 'published'
@@ -640,79 +597,54 @@ setPrompt('')
               message_id: `fan_${Date.now()}_es_1`,
               language: 'es',
               message_title: '🇪🇸 Alerta Estratégica Ferrari',
-              message_content: `Ferrari llama a ${driverName} a boxes tras señales de estrés elevado en los neumáticos. El equipo actúa rápido para proteger la carrera.`,
+              message_content: `Ferrari llama a ${driverName} a boxes tras señales de estrés elevado en los neumáticos.`,
               emotional_tone: 'strategic',
               timestamp,
               status: 'published'
             },
             {
-              message_id: `fan_${Date.now()}_en_2`,
-              language: 'en',
-              message_title: '🔥 Race Momentum Shift',
-              message_content: `A key strategy moment is unfolding. Ferrari is reacting with a defensive pit call to stabilize the next stint and keep the driver in the fight.`,
-              emotional_tone: 'dramatic',
-              timestamp,
-              status: 'published'
-            },
-            {
-              message_id: `fan_${Date.now()}_it_2`,
-              language: 'it',
-              message_title: '📊 Analisi dal Muretto',
-              message_content: `Il muretto Ferrari sta bilanciando passo gara, vita gomme e posizione in pista. Questa chiamata punta a ridurre il rischio senza perdere competitività.`,
-              emotional_tone: 'analytical',
-              timestamp,
-              status: 'published'
-            },
-            {
-              message_id: `fan_${Date.now()}_es_2`,
-              language: 'es',
-              message_title: '🏎️ Actualización para Tifosi',
-              message_content: `${driverName} entra en una fase clave de carrera. Ferrari adapta la estrategia en tiempo real para maximizar rendimiento y seguridad.`,
+              message_id: `fan_${Date.now()}_hi_1`,
+              language: 'hi',
+              message_title: '🇮🇳 Ferrari अपडेट',
+              message_content: `Ferrari ${driverName} को पिट में बुला रही है टायर स्ट्रेस के संकेतों के बाद।`,
               emotional_tone: 'fan-friendly',
               timestamp,
               status: 'published'
-            }
+            },
           ]
 
           setFanMessages(prev => [...fallbackMessages, ...prev].slice(0, 20))
         }
 
-        // Mark fan engagement stage as complete in the pipeline
         setOrchestrationStages(prev =>
-  prev.map(s => {
-
-    if (s.id === 'governance_console') {
+  prev.map(stage => {
+    if (stage.id === 'governance_approval') {
       return {
-        ...s,
-        status: 'complete',
-        timestamp: new Date().toISOString()
-      }
-    }
-
-    if (s.id === 'fan_engagement') {
-      return {
-        ...s,
+        ...stage,
         status: 'complete',
         timestamp: new Date().toISOString(),
         data: {
-          fan_narrative: 'Fan-safe race update generated'
+          approval_state: 'approved',
+          approval_required: false,
+          escalation_state: 'resolved',
+          approver_name: 'Marco Bellini',
         }
       }
     }
 
-    if (s.id === 'fan_hub') {
+    if (stage.id === 'fan_engagement') {
       return {
-        ...s,
+        ...stage,
         status: 'complete',
         timestamp: new Date().toISOString(),
         data: {
-          publication_status: 'Published',
-          audience_reach: 'Global Tifosi'
+          fan_narrative: 'Fan-safe race update generated',
+          multilingual: 'EN, IT, ES, HI'
         }
       }
     }
 
-    return s
+    return stage
   })
 )
       }
@@ -724,9 +656,6 @@ setPrompt('')
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------------
   const getRiskColor = (score: number) => {
     if (score >= 80) return 'text-red-500'
     if (score >= 60) return 'text-orange-500'
@@ -734,9 +663,6 @@ setPrompt('')
     return 'text-green-400'
   }
 
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">
       <div className="fixed inset-0 bg-gradient-to-br from-black via-gray-900 to-black opacity-90" />
@@ -744,7 +670,6 @@ setPrompt('')
       <div className="fixed inset-0 bg-[linear-gradient(rgba(220,0,0,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(220,0,0,0.03)_1px,transparent_1px)] bg-[size:50px_50px]" />
 
       <div className="relative z-10 flex h-screen">
-        {/* ── Sidebar ───────────────────────────────────────────────────────── */}
         <aside className="w-72 border-r border-ferrari-red/20 bg-black/50 backdrop-blur-xl flex flex-col">
           <div className="p-6 border-b border-ferrari-red/20">
             <div className="flex items-center gap-3">
@@ -768,40 +693,33 @@ setPrompt('')
               <span className="text-sm text-gray-400">Telemetry</span>
               <button
                 onClick={toggleSimulator}
-                className={`text-xs px-3 py-1 rounded-full ${isSimulatorRunning ? 'bg-ferrari-red/20 text-ferrari-red' : 'bg-gray-800 text-gray-400'}`}
+                className={`text-xs px-3 py-1 rounded-full ${
+                  isSimulatorRunning
+                    ? 'bg-ferrari-red/20 text-ferrari-red'
+                    : 'bg-gray-800 text-gray-400'
+                }`}
               >
                 {isSimulatorRunning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
               </button>
             </div>
 
             <div className="flex items-center justify-between">
-  <span className="text-sm text-gray-400">WebSocket</span>
-
-  <span
-    className={`text-xs ${
-      isSimulatorRunning && ws?.readyState === 1
-        ? 'text-green-400'
-        : 'text-red-400'
-    }`}
-  >
-    {isSimulatorRunning && ws?.readyState === 1
-      ? 'Connected'
-      : 'Disconnected'}
-  </span>
-</div>
+              <span className="text-sm text-gray-400">WebSocket</span>
+              <span className={`text-xs ${wsConnected && isSimulatorRunning ? 'text-green-400' : 'text-red-400'}`}>
+                {wsConnected && isSimulatorRunning ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
           </div>
 
           <div className="p-6 flex-1 overflow-auto">
-            <h3 className="text-sm font-semibold mb-4 tracking-[0.2em] text-gray-500">
-              ACTIVE AGENTS
-            </h3>
+            <h3 className="text-sm font-semibold mb-4 tracking-[0.2em] text-gray-500">ACTIVE AGENTS</h3>
 
             <div className="space-y-3">
               {[
                 { name: 'Safety Intelligence', icon: Shield, color: 'text-blue-400' },
-                { name: 'Strategy AI',         icon: Target, color: 'text-purple-400' },
-                { name: 'Governance',          icon: Eye,    color: 'text-yellow-400' },
-                { name: 'Fan Engagement',      icon: Users,  color: 'text-green-400' }
+                { name: 'Strategy AI', icon: Target, color: 'text-purple-400' },
+                { name: 'Governance', icon: Eye, color: 'text-yellow-400' },
+                { name: 'Fan Engagement', icon: Users, color: 'text-green-400' }
               ].map((agent) => (
                 <motion.div
                   whileHover={{ scale: 1.02 }}
@@ -811,12 +729,10 @@ setPrompt('')
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-700 bg-black/50">
                     <agent.icon className={`h-5 w-5 ${agent.color}`} />
                   </div>
-
                   <div className="flex-1">
                     <div className="text-sm font-semibold text-white">{agent.name}</div>
                     <div className="text-[10px] uppercase tracking-[0.25em] text-gray-500">AI Agent Active</div>
                   </div>
-
                   <div className="relative">
                     <div className="h-2.5 w-2.5 rounded-full bg-green-400 animate-pulse" />
                     <div className="absolute inset-0 rounded-full bg-green-400 blur-sm opacity-60" />
@@ -831,11 +747,11 @@ setPrompt('')
                 <span className="rounded-full bg-green-500/20 px-2 py-1 text-[10px] font-bold text-green-400">PUSH</span>
               </div>
               <div className="text-xl font-black tracking-wide text-white">
-                    {telemetry?.vehicle?.driver_name || 'No Driver'}
+                {telemetry?.vehicle?.driver_name || 'No Driver'}
               </div>
-             <div className="mt-1 text-sm text-gray-500">
-  {telemetry?.vehicle?.team_name || 'Unknown Team'}
-</div>
+              <div className="mt-1 text-sm text-gray-500">
+                {telemetry?.vehicle?.team_name || 'Unknown Team'}
+              </div>
               <div className="mt-5 h-2 overflow-hidden rounded-full bg-black/50">
                 <motion.div
                   initial={{ width: 0 }}
@@ -899,34 +815,19 @@ setPrompt('')
               </div>
             </div>
 
-            {/* IBM Footer */}
-<div className="mt-5 rounded-3xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 to-black/40 p-5 backdrop-blur-xl">
-  <div className="flex justify-center mb-4">
-    <img
-      src={ibmLogo}
-      alt="IBM"
-      className="h-10 object-contain opacity-90"
-    />
-  </div>
-
-  <div className="text-center">
-    <p className="text-[10px] uppercase tracking-[0.3em] text-cyan-400/70">
-      Powered By
-    </p>
-
-    <h3 className="text-lg font-bold text-white mt-2">
-      IBM watsonx
-    </h3>
-
-    <p className="text-xs text-gray-500 mt-1">
-      Enterprise AI Intelligence Platform
-    </p>
-  </div>
-</div>
+            <div className="mt-5 rounded-3xl border border-cyan-500/20 bg-gradient-to-br from-cyan-950/20 to-black/40 p-5 backdrop-blur-xl">
+              <div className="flex justify-center mb-4">
+                <img src={ibmLogo} alt="IBM" className="h-10 object-contain opacity-90" />
+              </div>
+              <div className="text-center">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-cyan-400/70">Powered By</p>
+                <h3 className="text-lg font-bold text-white mt-2">IBM watsonx</h3>
+                <p className="text-xs text-gray-500 mt-1">Enterprise AI Intelligence Platform</p>
+              </div>
+            </div>
           </div>
         </aside>
 
-        {/* ── Main content ──────────────────────────────────────────────────── */}
         <main className="flex-1 flex flex-col overflow-hidden">
           <header className="border-b border-ferrari-red/20 bg-black/30 backdrop-blur-xl">
             <div className="px-8 py-4 flex items-center justify-between">
@@ -950,15 +851,12 @@ setPrompt('')
                   <Shield className="w-4 h-4 text-ferrari-red" />
                   <span className="text-sm font-semibold">Governance Active</span>
                 </div>
-                <button onClick={generateCritical} className="px-4 py-2 bg-gradient-to-r from-ferrari-red to-red-700 rounded-lg text-sm font-semibold">
-                  Generate Critical Event
-                </button>
+                <button onClick={generateCritical} className="px-4 py-2 bg-gradient-to-r from-red-600 to-red-800 text-white rounded-lg text-sm font-semibold" > Generate Critical Event </button>
               </div>
             </div>
           </header>
 
           <div className="flex-1 overflow-auto p-8 space-y-6">
-            {/* AI Command Center */}
             <section className="glass-panel p-8 rounded-2xl border border-ferrari-red/20">
               <div className="flex items-center gap-3 mb-6">
                 <Brain className="w-6 h-6 text-ferrari-red" />
@@ -975,20 +873,14 @@ setPrompt('')
                   placeholder="Example: Telemetry shows FER-16 has high tire wear and steering vibration. Assess safety risk, recommend strategy, request approval if needed, and create fan-safe update."
                   className="w-full px-6 py-4 bg-black/50 border-2 border-gray-800 rounded-xl focus:outline-none focus:border-ferrari-red resize-none text-sm placeholder-gray-600"
                   rows={3}
-                  disabled={loading}
+                  disabled={!isSimulatorRunning || !wsConnected || loading}
                 />
 
                 <button
                   type="submit"
-                  disabled={loading || !prompt}
+                  disabled={loading || !prompt.trim() || !isSimulatorRunning || !wsConnected || !telemetry}
                   className="group relative w-full overflow-hidden rounded-2xl border border-ferrari-red/30 bg-gradient-to-r from-ferrari-red via-red-700 to-red-900 px-8 py-5 text-lg font-black tracking-wide text-white shadow-[0_0_25px_rgba(220,0,0,0.35)] transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_0_45px_rgba(220,0,0,0.65)] hover:border-ferrari-red/80 active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                 >
-                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
-                    <div className="absolute inset-0 bg-gradient-to-r from-white/10 via-transparent to-white/10 animate-pulse" />
-                  </div>
-                  <div className="absolute inset-0 overflow-hidden">
-                    <div className="absolute top-0 -left-[120%] h-full w-[60%] rotate-12 bg-white/10 blur-2xl transition-all duration-1000 group-hover:left-[140%]" />
-                  </div>
                   <div className="relative z-10 flex items-center justify-center gap-3">
                     {loading ? (
                       <>
@@ -1002,24 +894,19 @@ setPrompt('')
                       </>
                     )}
                   </div>
-                  <div className="absolute bottom-0 left-0 h-[2px] w-full bg-gradient-to-r from-transparent via-white/60 to-transparent opacity-60" />
                 </button>
 
                 <div className="mt-6 flex flex-wrap gap-3">
                   {[
-  'Should Ferrari pit now?',
-  'Compare Leclerc telemetry vs Sainz',
-  'Assess current tire degradation risk',
-  'Predict safest pit window',
-  'What happens if we delay pit stop by 3 laps?',
-  'Generate race engineer recommendation',
-  'Summarize current telemetry status',
-  'How risky is current steering vibration?',
-  'Recommend aggressive strategy',
-  'Recommend conservative strategy',
-  'Generate fan-safe update for Tifosi',
-  'Predict next 5 laps performance'
-].map((sample) => (
+                    'Should Ferrari pit now?',
+                    'Assess current tire degradation risk',
+                    'Predict safest pit window',
+                    'Recommend aggressive strategy',
+                    'Recommend conservative strategy',
+                    'How risky is current steering vibration?',
+                    'Summarize current telemetry status',
+                    'Generate race engineer recommendation',
+                  ].map((sample) => (
                     <button
                       key={sample}
                       type="button"
@@ -1033,7 +920,6 @@ setPrompt('')
               </form>
             </section>
 
-            {/* Race Track Visualization */}
             <section className="glass-panel rounded-2xl border border-ferrari-red/20 overflow-hidden">
               <RaceTrackVisualization
                 telemetryData={telemetry}
@@ -1042,7 +928,6 @@ setPrompt('')
             </section>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Live Telemetry */}
               <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-xl font-bold flex items-center gap-3">
@@ -1067,14 +952,16 @@ setPrompt('')
                           {telemetry.risk_analysis.risk_score}
                         </div>
                       </div>
-                      <div className="text-xs text-gray-500 uppercase">{telemetry.risk_analysis.severity} Risk</div>
+                      <div className="text-xs text-gray-500 uppercase">
+                        {telemetry.risk_analysis.severity} Risk
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
-                      <Metric label="Tire Wear"   value={`${telemetry.vehicle.tire_wear_percent.toFixed(1)}%`} color="text-orange-400" sub={telemetry.vehicle.tire_compound} />
-                      <Metric label="Vibration"   value={telemetry.vehicle.steering_vibration.toFixed(1)}      color="text-red-400"    sub="steering" />
+                      <Metric label="Tire Wear" value={`${telemetry.vehicle.tire_wear_percent.toFixed(1)}%`} color="text-orange-400" sub={telemetry.vehicle.tire_compound} />
+                      <Metric label="Vibration" value={telemetry.vehicle.steering_vibration.toFixed(1)} color="text-red-400" sub="steering" />
                       <Metric label="Engine Temp" value={`${telemetry.vehicle.engine_temperature.toFixed(0)}°C`} color="text-yellow-400" />
-                      <Metric label="Speed"       value={telemetry.vehicle.speed_kmh.toFixed(0)}               color="text-cyan-400"   sub="km/h" />
+                      <Metric label="Speed" value={telemetry.vehicle.speed_kmh.toFixed(0)} color="text-cyan-400" sub="km/h" />
                     </div>
 
                     <div className="h-32">
@@ -1082,7 +969,7 @@ setPrompt('')
                         <AreaChart data={telemetryHistory}>
                           <defs>
                             <linearGradient id="riskGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%"  stopColor="#DC0000" stopOpacity={0.8} />
+                              <stop offset="5%" stopColor="#DC0000" stopOpacity={0.8} />
                               <stop offset="95%" stopColor="#DC0000" stopOpacity={0} />
                             </linearGradient>
                           </defs>
@@ -1099,7 +986,6 @@ setPrompt('')
                 )}
               </section>
 
-              {/* AI Orchestration Pipeline */}
               <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
                 <h3 className="text-xl font-bold flex items-center gap-3 mb-6">
                   <Sparkles className="w-5 h-5 text-purple-400" />
@@ -1111,17 +997,11 @@ setPrompt('')
                     ? orchestrationStages.map(stage => (
                         <StageCard key={stage.id} stage={stage} getRiskColor={getRiskColor} />
                       ))
-                    : (
-                        <EmptyState
-                          icon={<Brain className="w-12 h-12 mx-auto mb-4 opacity-50" />}
-                          text="Execute an AI workflow to see the pipeline"
-                        />
-                      )
+                    : <EmptyState icon={<Brain className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="Execute an AI workflow to see the pipeline" />
                   }
                 </div>
               </section>
 
-              {/* Governance Console */}
               <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
                 <div className="flex items-center gap-3 mb-6">
                   <Shield className="w-5 h-5 text-yellow-400" />
@@ -1139,11 +1019,16 @@ setPrompt('')
                         <div key={approval.approval_id} className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
                           <div className="flex items-start justify-between mb-3">
                             <div>
-                              <div className="text-sm font-semibold mb-1">Risk Score: {approval.risk_score}</div>
-                              <div className="text-xs text-gray-400">{approval.severity} severity</div>
+                              <div className="text-sm font-semibold mb-1">
+                                Risk Score: {approval.risk_score}
+                              </div>
+                              <div className="text-xs text-gray-400">
+                                {approval.severity} severity
+                              </div>
                             </div>
                             <AlertTriangle className="w-5 h-5 text-yellow-400" />
                           </div>
+
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleApproval(approval.approval_id, 'approve')}
@@ -1160,17 +1045,11 @@ setPrompt('')
                           </div>
                         </div>
                       ))
-                    : (
-                        <EmptyState
-                          icon={<CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />}
-                          text="No pending approvals"
-                        />
-                      )
+                    : <EmptyState icon={<CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="No pending approvals" />
                   }
                 </div>
               </section>
 
-              {/* Fan Intelligence Hub */}
               <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
                 <h3 className="text-xl font-bold flex items-center gap-3 mb-6">
                   <Users className="w-5 h-5 text-green-400" />
@@ -1195,7 +1074,7 @@ setPrompt('')
                           <div className="flex items-center justify-between gap-3 mb-2">
                             <div className="min-w-0">
                               <div className="text-sm font-bold text-white truncate">
-                                {msg.message_title || 'Fan Race Update'}
+                                {msg.message_title || msg.title || 'Fan Race Update'}
                               </div>
                               <div className="text-xs text-gray-500">
                                 {msg.emotional_tone || 'strategic'}
@@ -1205,60 +1084,45 @@ setPrompt('')
                               {(msg.language || 'en').toUpperCase()}
                             </span>
                           </div>
+
                           <p className="text-sm text-gray-300 leading-relaxed">
-                            {msg.message_content}
+                              {msg.message_content || msg.content || msg.text || msg.message || 'Fan update generated.'}
                           </p>
                         </motion.div>
                       ))
-                    : (
-                        <EmptyState
-                          icon={<Users className="w-12 h-12 mx-auto mb-4 opacity-50" />}
-                          text="No fan messages generated"
-                        />
-                      )
+                    : <EmptyState icon={<Users className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="Awaiting governance approval to generate fan messages" />
                   }
                 </div>
               </section>
             </div>
 
-            {/* AI Chat History */}
-<section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
-  <h3 className="text-xl font-bold mb-4">
-    AI Command Chat
-  </h3>
+            <section className="glass-panel p-6 rounded-2xl border border-ferrari-red/20">
+              <h3 className="text-xl font-bold mb-4">AI Command Chat</h3>
 
-  <div className="space-y-4 max-h-[400px] overflow-y-auto">
-    {chatHistory.length > 0 ? (
-      chatHistory.map((msg, index) => (
-        <div
-          key={index}
-          className={`p-4 rounded-xl ${
-            msg.role === 'user'
-              ? 'bg-ferrari-red/10 border border-ferrari-red/30 ml-12'
-              : 'bg-cyan-500/10 border border-cyan-500/30 mr-12'
-          }`}
-        >
-          <div className="text-xs text-gray-500 mb-2 uppercase">
-            {msg.role === 'user'
-              ? 'Race Engineer'
-              : 'TifosiX AI'}
-          </div>
+              <div className="space-y-4 max-h-[400px] overflow-y-auto">
+                {chatHistory.length > 0
+                  ? chatHistory.map((msg, index) => (
+                      <div
+                        key={index}
+                        className={`p-4 rounded-xl ${
+                          msg.role === 'user'
+                            ? 'bg-ferrari-red/10 border border-ferrari-red/30 ml-12'
+                            : 'bg-cyan-500/10 border border-cyan-500/30 mr-12'
+                        }`}
+                      >
+                        <div className="text-xs text-gray-500 mb-2 uppercase">
+                          {msg.role === 'user' ? 'Race Engineer' : 'TifosiX AI'}
+                        </div>
+                        <div className="text-sm text-gray-300">
+                          {msg.message}
+                        </div>
+                      </div>
+                    ))
+                  : <EmptyState icon={<Brain className="w-12 h-12 mx-auto mb-4 opacity-50" />} text="Ask TifosiX AI anything" />
+                }
+              </div>
+            </section>
 
-          <div className="text-sm text-gray-300">
-            {msg.message}
-          </div>
-        </div>
-      ))
-    ) : (
-      <EmptyState
-        icon={<Brain className="w-12 h-12 mx-auto mb-4 opacity-50" />}
-        text="Ask TifosiX AI anything"
-      />
-    )}
-  </div>
-</section>
-
-            {/* Raw workflow response */}
             <AnimatePresence>
               {response && (
                 <motion.section
@@ -1281,8 +1145,6 @@ setPrompt('')
   )
 }
 
-// ── Sub-components ───────────────────────────────────────────────────────────
-
 function Metric({ label, value, color, sub }: { label: string; value: string; color: string; sub?: string }) {
   return (
     <div className="p-3 bg-black/50 rounded-lg border border-gray-800">
@@ -1304,36 +1166,31 @@ function EmptyState({ icon, text }: { icon: React.ReactNode; text: string }) {
   )
 }
 
-function StageCard({
-  stage,
-  getRiskColor,
-}: {
-  stage: OrchestrationStage
-  getRiskColor: (score: number) => string
-}) {
+function StageCard({ stage, getRiskColor }: { stage: OrchestrationStage; getRiskColor: (s: number) => string }) {
   return (
     <div className={`p-4 rounded-xl border transition-all duration-500 ${
-      stage.status === 'complete'
-        ? 'bg-green-500/5 border-green-500/30'
-        : stage.status === 'running'
-        ? 'bg-ferrari-red/10 border-ferrari-red/40 animate-pulse'
-        : stage.status === 'error'
-        ? 'bg-red-500/10 border-red-500/30'
-        : 'bg-gray-900/30 border-gray-800/50'
+      stage.status === 'complete' ? 'bg-green-500/5 border-green-500/30'
+      : stage.status === 'running' ? 'bg-ferrari-red/10 border-ferrari-red/40 animate-pulse'
+      : stage.status === 'error' ? 'bg-red-500/10 border-red-500/30'
+      : 'bg-gray-900/30 border-gray-800/50'
     }`}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
           {stage.status === 'complete' && <CheckCircle className="w-5 h-5 text-green-400" />}
-          {stage.status === 'running'  && <Sparkles   className="w-5 h-5 text-ferrari-red animate-spin" />}
-          {stage.status === 'pending'  && <Clock      className="w-5 h-5 text-gray-600" />}
-          {stage.status === 'error'    && <AlertTriangle className="w-5 h-5 text-red-400" />}
+          {stage.status === 'running' && <Sparkles className="w-5 h-5 text-ferrari-red animate-spin" />}
+          {stage.status === 'pending' && <Clock className="w-5 h-5 text-gray-600" />}
+          {stage.status === 'error' && <AlertTriangle className="w-5 h-5 text-red-400" />}
+
           <div>
             <div className="text-sm font-bold">{stage.name}</div>
             {stage.timestamp && (
-              <div className="text-xs text-gray-500">{new Date(stage.timestamp).toLocaleTimeString()}</div>
+              <div className="text-xs text-gray-500">
+                {new Date(stage.timestamp).toLocaleTimeString()}
+              </div>
             )}
           </div>
         </div>
+
         <ChevronRight className="w-4 h-4 text-gray-600" />
       </div>
 
@@ -1341,8 +1198,14 @@ function StageCard({
         <div className="grid grid-cols-2 gap-2 text-xs pt-3 border-t border-gray-800/50">
           {Object.entries(stage.data).map(([key, value]) => (
             <div key={key} className="p-2 bg-black/30 rounded col-span-1">
-              <div className="text-gray-500 mb-1">{key.replace(/_/g, ' ')}</div>
-              <div className={`font-semibold ${key === 'risk_score' ? getRiskColor(Number(value)) : 'text-gray-300'}`}>
+              <div className="text-gray-500 mb-1">
+                {key.replace(/_/g, ' ')}
+              </div>
+              <div className={`font-semibold ${
+                key === 'risk_score'
+                  ? getRiskColor(Number(value))
+                  : 'text-gray-300'
+              }`}>
                 {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
               </div>
             </div>
