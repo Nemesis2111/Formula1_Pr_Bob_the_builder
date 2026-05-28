@@ -134,54 +134,37 @@ app.post('/agent', async (req, res) => {
     console.log(`\n📨 Received agent request: "${prompt}"`);
 
     // Process through AI supervisor
-    if (event.risk_analysis.risk_score >= 60) {
+    const telemetryEvent =
+  context?.telemetryEvent ||
+  latestTelemetryEvent ||
+  null
 
-  console.log(
-    `🚨 High-risk event detected`
-  );
+broadcast('pipeline_start', {
+  event_id:
+    telemetryEvent?.event_id ||
+    `manual_${Date.now()}`,
 
-  try {
+  vehicle_id:
+    telemetryEvent?.vehicle?.vehicle_id ||
+    'FER-16',
 
-    // Only initialize pipeline
-    broadcast('pipeline_start', {
-      event_id: event.event_id,
-      vehicle_id: event.vehicle.vehicle_id,
-      risk_score:
-        event.risk_analysis.risk_score,
-      severity:
-        event.risk_analysis.severity,
-    });
+  risk_score:
+    telemetryEvent?.risk_analysis?.risk_score ||
+    50,
 
-    // ONLY Safety + Strategy
-    const safetyResult =
-      await decisionTwinSupervisorAgent.process(
-        `Telemetry shows ${event.vehicle.vehicle_id}
-         has ${event.risk_analysis.event_type}.
-         Assess safety risk, recommend strategy, evaluate governance approval, and prepare fan engagement workflow.`,
-        {
-           telemetryEvent: event,
-           languages: ['en', 'it', 'es', 'hi']
-        }
-      );
+  severity:
+    telemetryEvent?.risk_analysis?.severity ||
+    'moderate',
+})
 
-    // Broadcast Safety/Strategy only
-    broadcast(
-      'auto_analysis',
-      safetyResult
-    );
-
-    console.log(
-      '✅ Safety & Strategy updated'
-    );
-
-  } catch (error) {
-
-    console.error(
-      '❌ Auto-analysis error:',
-      error
-    );
-  }
-}
+const result =
+  await decisionTwinSupervisorAgent.process(
+    prompt,
+    {
+      telemetryEvent,
+      languages: ['en', 'it', 'es', 'hi']
+    }
+  )
 
     // ==========================
     // AUTO FAN MESSAGE GENERATION
@@ -327,20 +310,28 @@ app.post('/agent', async (req, res) => {
     // Broadcast AI response
     broadcast('agent_response', result);
 
-    return res.json(result);
+return res.json({
+  success: true,
+  summary:
+    result?.summary ||
+    result?.result?.summary ||
+    'AI workflow completed',
+  result,
+  telemetry_context: telemetryEvent
+});
 
-  } catch (error) {
+} catch (error) {
 
-    console.error(
-      '❌ Agent endpoint error:',
-      error
-    );
+  console.error(
+    '❌ Agent endpoint error:',
+    error
+  );
 
-    return res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
+  return res.status(500).json({
+    success: false,
+    error: error.message,
+  });
+}
 });
  
 // ============================================================================
@@ -875,70 +866,37 @@ telemetrySimulator.on('telemetry', async (event) => {
   // Broadcast raw telemetry to WebSocket clients first
 
   broadcast('telemetry', event);
- 
-  // Auto-process high-risk events
 
+  // Auto-process high-risk events
   if (event.risk_analysis.risk_score >= 60) {
 
     console.log(`🚨 High-risk event detected - auto-processing...`);
- 
+
     try {
 
-      // Broadcast pipeline start so the frontend can initialize stage cards immediately
-
       broadcast('pipeline_start', {
-
         event_id: event.event_id,
-
         vehicle_id: event.vehicle.vehicle_id,
-
         risk_score: event.risk_analysis.risk_score,
-
         severity: event.risk_analysis.severity,
-
       });
- 
+
       const result =
-  await decisionTwinSupervisorAgent.process(
-    `Telemetry shows ${event.vehicle.vehicle_id}
-     has ${event.risk_analysis.event_type}.
-     Assess safety risk and recommend strategy only.`,
-    {
-      telemetryEvent: event,
-
-      // IMPORTANT
-      skipGovernance: true,
-      skipFanEngagement: true
-    }
-  );
- 
-      // Broadcast each agent step individually with a staggered delay
-
-      // so the frontend can animate each card appearing in sequence
-
-      const agentChain = result?.result?.agent_chain || [];
-
-      agentChain.forEach((step, i) => {
-
-        setTimeout(() => {
-
-          broadcast('agent_step', { step, index: i, total: agentChain.length });
-
-        }, i * 200);
-
-      });
- 
-      // Broadcast the full result last — frontend uses this to finalise all stages
+        await decisionTwinSupervisorAgent.process(
+          `Telemetry shows ${event.vehicle.vehicle_id}
+          has ${event.risk_analysis.event_type}.
+          Assess safety risk, recommend strategy, and request approval if needed.`,
+          { telemetryEvent: event }
+        );
 
       broadcast('auto_analysis', result);
- 
+
     } catch (error) {
-
       console.error('❌ Auto-analysis error:', error);
-
     }
-
   }
+ 
+  // Auto-process high-risk events
 
 });
  

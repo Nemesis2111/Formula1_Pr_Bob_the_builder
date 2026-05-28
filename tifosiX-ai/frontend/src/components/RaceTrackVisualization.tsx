@@ -14,7 +14,7 @@ import {
   X,
   HeartPulse
 } from 'lucide-react'
-
+ 
 interface Driver {
   id: string
   name: string
@@ -33,12 +33,12 @@ interface Driver {
   strategyRecommendation?: string
   reasoningSummary?: string
 }
-
+ 
 interface RaceTrackVisualizationProps {
   telemetryData?: any
   orchestrationStages?: any[]
 }
-
+ 
 const TEAM_COLORS: Record<string, string> = {
   Ferrari: '#DC0000',
   Mercedes: '#00D2BE',
@@ -58,7 +58,7 @@ const DRIVER_GIFS: Record<string, string> = {
   'Max Verstappen': '/max-verstappen.gif',
   'Lando Norris': '/lando-norris.gif'
 }
-
+ 
 const CIRCUIT_PATH = `
   M 100 400
   L 200 400
@@ -81,7 +81,7 @@ const CIRCUIT_PATH = `
   Q 100 420 100 400
   Z
 `
-
+ 
 const PIT_LANE_PATH = `
   M 100 440
   L 240 440
@@ -89,7 +89,7 @@ const PIT_LANE_PATH = `
   L 100 460
   Z
 `
-
+ 
 const recalculatePositions = (drivers: Driver[]) => {
   const ranked = [...drivers].sort((a, b) => {
     if (b.lap !== a.lap) return b.lap - a.lap
@@ -104,7 +104,7 @@ const recalculatePositions = (drivers: Driver[]) => {
     position: positionMap.get(driver.id) || driver.position
   }))
 }
-
+ 
 const calculateWinPredictions = (drivers: Driver[]) => {
   const scores = drivers.map(driver => {
     const positionScore = (drivers.length + 1 - driver.position) * 38
@@ -120,7 +120,7 @@ const calculateWinPredictions = (drivers: Driver[]) => {
   const totalScore = scores.reduce((sum, item) => sum + item.score, 0)
   return new Map(scores.map(item => [item.id, Math.round((item.score / totalScore) * 100)]))
 }
-
+ 
 export default function RaceTrackVisualization({
   telemetryData,
   orchestrationStages = []
@@ -134,36 +134,36 @@ export default function RaceTrackVisualization({
       { id: 'MCL-4', name: 'Lando Norris', team: 'McLaren', position: 5, lapProgress: 0.12, state: 'normal', riskScore: 14, tireWear: 11, speed: 296, lap: 1, tireCompound: 'soft', engineTemp: 97, steeringVibration: 2.0 }
     ])
   )
-
+ 
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null)
   const [currentLap, setCurrentLap] = useState(0)
   const [totalLaps] = useState(58)
   const pathRef = useRef<SVGPathElement>(null)
   const [pathLength, setPathLength] = useState(0)
-
+ 
   useEffect(() => {
     if (pathRef.current) setPathLength(pathRef.current.getTotalLength())
   }, [])
-
+ 
   useEffect(() => {
     if (!telemetryData?.vehicle) return
     setDrivers(prev => {
       const updated = prev.map(driver => {
   let newState: Driver['state'] = 'normal'
-
+ 
   if (driver.id === telemetryData.vehicle.vehicle_id) {
     if (telemetryData.risk_analysis?.risk_score >= 80) {
       newState = 'high_risk'
     }
-
+ 
     const strategyStage = orchestrationStages.find(
       s => s.name === 'Strategy Recommendation' && s.status === 'complete'
     )
-
+ 
     if (strategyStage?.data?.recommended_pit_window) {
       newState = 'pit_incoming'
     }
-
+ 
     return {
       ...driver,
       riskScore: telemetryData.risk_analysis?.risk_score ?? driver.riskScore,
@@ -176,7 +176,7 @@ export default function RaceTrackVisualization({
       state: newState
     }
   }
-
+ 
   // Animate ALL OTHER DRIVERS TOO
   return {
     ...driver,
@@ -206,7 +206,7 @@ export default function RaceTrackVisualization({
     })
     setCurrentLap(telemetryData?.lap ?? 0)
   }, [telemetryData, orchestrationStages])
-
+ 
   useEffect(() => {
     const interval = setInterval(() => {
       setDrivers(prev => {
@@ -222,13 +222,13 @@ export default function RaceTrackVisualization({
     }, 50)
     return () => clearInterval(interval)
   }, [])
-
+ 
   const getPositionOnPath = (progress: number) => {
     if (!pathRef.current || pathLength === 0) return { x: 0, y: 0 }
     const point = pathRef.current.getPointAtLength(progress * pathLength)
     return { x: point.x, y: point.y }
   }
-
+ 
   const getDriverColor = (driver: Driver) => {
     switch (driver.state) {
       case 'high_risk': return '#EF4444'
@@ -238,7 +238,7 @@ export default function RaceTrackVisualization({
       default: return TEAM_COLORS[driver.team] || '#FFFFFF'
     }
   }
-
+ 
   const getDriverGlow = (driver: Driver) => {
     switch (driver.state) {
       case 'high_risk': return 'drop-shadow(0 0 10px rgba(239,68,68,0.95))'
@@ -248,10 +248,10 @@ export default function RaceTrackVisualization({
       default: return `drop-shadow(0 0 8px ${TEAM_COLORS[driver.team] || '#FFFFFF'})`
     }
   }
-
+ 
   const sortedDrivers = [...drivers].sort((a, b) => a.position - b.position)
   const winPredictions = calculateWinPredictions(drivers)
-
+ 
   return (
     <div
       className="relative w-full overflow-hidden rounded-2xl border border-red-500/30 bg-[#050508]"
@@ -260,9 +260,9 @@ export default function RaceTrackVisualization({
       {/* Background effects */}
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(220,0,0,0.18),transparent_36%),radial-gradient(circle_at_75%_70%,rgba(220,0,0,0.12),transparent_42%)]" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(255,0,0,0.03)_1px,transparent_1px),linear-gradient(rgba(255,0,0,0.03)_1px,transparent_1px)] bg-[size:80px_80px]" />
-
+ 
       <div className="relative z-10 flex flex-col gap-4 p-4">
-
+ 
         {/* ── Single Header ── */}
         <div className="flex items-center justify-between rounded-2xl border border-red-500/30 bg-black/70 px-6 py-4 backdrop-blur-xl">
           <div className="flex items-center gap-4">
@@ -291,7 +291,7 @@ export default function RaceTrackVisualization({
   }}
 >
   <div className="absolute inset-0 bg-[radial-gradient(circle,rgba(255,0,0,0.15),transparent_72%)]" />
-
+ 
   <img
     src={ferrariLogo}
     alt="Ferrari Logo"
@@ -318,16 +318,16 @@ export default function RaceTrackVisualization({
               </div>
             </div>
           </div>
-
+ 
           <div className="rounded-xl border border-red-500/25 bg-black/50 px-6 py-3 text-right">
             <p className="text-[10px] uppercase tracking-[0.4em] text-red-300/80">Scuderia Mode</p>
             <p className="mt-1 text-sm font-black text-white">Ferrari AI Race Intelligence</p>
           </div>
         </div>
-
+ 
         {/* ── Main content: timing + track ── */}
         <div className="grid grid-cols-[400px_1fr] gap-4">
-
+ 
           {/* Left: Live Timing */}
           <div className="flex flex-col rounded-2xl border border-red-500/30 bg-black/60 p-4 backdrop-blur-xl" style={{ boxShadow: '0 0 50px rgba(220,0,0,0.2)' }}>
             <div className="mb-3 flex items-center justify-between">
@@ -340,7 +340,7 @@ export default function RaceTrackVisualization({
                 <span className="text-[10px] uppercase tracking-[0.3em] text-red-400">Live</span>
               </div>
             </div>
-
+ 
             <div className="flex-1 space-y-2 overflow-y-auto pr-1" style={{ maxHeight: '560px' }}>
               {sortedDrivers.map(driver => {
                 const winChance = winPredictions.get(driver.id) || 0
@@ -401,7 +401,7 @@ export default function RaceTrackVisualization({
                 )
               })}
             </div>
-
+ 
             {/* Team legend */}
             <div className="mt-3 flex items-center justify-between rounded-xl border border-red-500/15 bg-black/50 px-3 py-2 text-[11px] text-gray-300">
               <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-600" />Ferrari</span>
@@ -411,7 +411,7 @@ export default function RaceTrackVisualization({
               <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-gray-500" />Others</span>
             </div>
           </div>
-
+ 
           {/* Right: Track Map */}
           <div className="flex flex-col rounded-2xl border border-red-500/20 bg-black/50 backdrop-blur-xl overflow-hidden" style={{ boxShadow: '0 0 50px rgba(220,0,0,0.15)' }}>
             {/* Track top bar */}
@@ -433,7 +433,7 @@ export default function RaceTrackVisualization({
                 </div>
               </div>
             </div>
-
+ 
             {/* SVG Track */}
             <div className="flex-1 relative flex items-center justify-center">
               <svg
@@ -457,15 +457,15 @@ export default function RaceTrackVisualization({
                     <feMerge><feMergeNode in="coloredBlur" /><feMergeNode in="SourceGraphic" /></feMerge>
                   </filter>
                 </defs>
-
+ 
                 <path d={CIRCUIT_PATH} fill="none" stroke="rgba(220,0,0,0.30)" strokeWidth="54" filter="url(#glow)" />
                 <path ref={pathRef} d={CIRCUIT_PATH} fill="none" stroke="url(#trackGradient)" strokeWidth="44" strokeLinecap="round" strokeLinejoin="round" />
                 <path d={CIRCUIT_PATH} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="2" strokeDasharray="12 13" />
                 <path d={PIT_LANE_PATH} fill="url(#pitGradient)" stroke="rgba(234,179,8,0.75)" strokeWidth="2" />
-
+ 
                 {/* Pit Lane label */}
                 <text x="170" y="435" textAnchor="middle" fill="rgba(234,179,8,0.9)" fontSize="10" fontWeight="bold">PIT LANE</text>
-
+ 
                 {/* Sector markers */}
                 {[0.33, 0.66].map((sector, i) => {
                   const pos = getPositionOnPath(sector)
@@ -476,12 +476,12 @@ export default function RaceTrackVisualization({
                     </g>
                   )
                 })}
-
+ 
                 {/* Start/Finish line */}
                 <line x1="100" y1="390" x2="100" y2="430" stroke="white" strokeWidth="4" strokeDasharray="4 4" />
                 <text x="80" y="538" fill="white" fontSize="11" fontWeight="bold" textAnchor="middle">START /</text>
                 <text x="80" y="552" fill="white" fontSize="11" fontWeight="bold" textAnchor="middle">FINISH</text>
-
+ 
                 {/* Drivers */}
                 {sortedDrivers.map((driver, index) => {
                   const pos = getPositionOnPath(driver.lapProgress)
@@ -519,7 +519,7 @@ export default function RaceTrackVisualization({
                 })}
               </svg>
             </div>
-
+ 
             {/* State legend bar at bottom */}
             <div className="flex items-center justify-center gap-6 border-t border-red-500/15 bg-black/60 px-6 py-3 shrink-0">
               {[
@@ -538,7 +538,7 @@ export default function RaceTrackVisualization({
           </div>
         </div>
       </div>
-
+ 
       {/* Driver Detail Panel */}
       <AnimatePresence>
         {selectedDriver && (
@@ -552,7 +552,7 @@ export default function RaceTrackVisualization({
             <button onClick={() => setSelectedDriver(null)} className="absolute right-3 top-3 rounded-lg p-1.5 transition-colors hover:bg-white/10">
               <X className="h-4 w-4 text-white" />
             </button>
-
+ 
             <div className="mb-5">
               <div className="mb-2 flex items-center justify-between">
   <div className="flex items-center gap-4">
@@ -566,13 +566,13 @@ export default function RaceTrackVisualization({
     >
       {selectedDriver.position}
     </div>
-
+ 
     <div>
       <div className="flex items-center gap-2">
         <h3 className="text-lg font-black text-white">
           {selectedDriver.name}
         </h3>
-
+ 
         <motion.span
           className="text-red-500 text-lg"
           animate={{
@@ -587,17 +587,17 @@ export default function RaceTrackVisualization({
           ♥
         </motion.span>
       </div>
-
+ 
       <p className="text-xs text-gray-400">
         {selectedDriver.team}
       </p>
-
+ 
       <div className="mt-1 text-[10px] uppercase tracking-[0.3em] text-red-400">
         Ferrari Driver Focus
       </div>
     </div>
   </div>
-
+ 
   <motion.img
      src={DRIVER_GIFS[selectedDriver.name] || '/default-driver.gif'}
      alt={selectedDriver.name}
@@ -617,7 +617,7 @@ export default function RaceTrackVisualization({
 </div>
               <div className="text-xs uppercase tracking-wider text-gray-500">{selectedDriver.id} · Lap {selectedDriver.lap}</div>
             </div>
-
+ 
             <div className="mb-4 rounded-xl border border-cyan-500/25 bg-gradient-to-br from-cyan-500/15 to-transparent p-4">
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-xs text-gray-400">Live Win Prediction</span>
@@ -628,7 +628,7 @@ export default function RaceTrackVisualization({
                 <motion.div className="h-2 rounded-full bg-cyan-400" initial={{ width: 0 }} animate={{ width: `${winPredictions.get(selectedDriver.id) || 0}%` }} transition={{ duration: 0.5 }} />
               </div>
             </div>
-
+ 
             <div className="mb-4 rounded-xl border border-red-500/25 bg-gradient-to-br from-red-500/15 to-transparent p-4">
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-xs text-gray-400">Risk Score</span>
@@ -643,7 +643,7 @@ export default function RaceTrackVisualization({
                 />
               </div>
             </div>
-
+ 
             <div className="mb-4 grid grid-cols-2 gap-2">
               {[
                 { icon: <Gauge className="h-4 w-4 text-cyan-400" />, label: 'Speed', value: `${Math.round(selectedDriver.speed)} km/h` },
@@ -657,7 +657,7 @@ export default function RaceTrackVisualization({
                 </div>
               ))}
             </div>
-
+ 
             {selectedDriver.strategyRecommendation && (
               <div className="mb-4 rounded-xl border border-yellow-500/25 bg-gradient-to-br from-yellow-500/15 to-transparent p-4">
                 <div className="mb-2 flex items-center gap-2"><TrendingUp className="h-4 w-4 text-yellow-400" /><span className="text-xs font-semibold text-yellow-400">Strategy</span></div>
@@ -682,3 +682,5 @@ export default function RaceTrackVisualization({
     </div>
   )
 }
+ 
+ 

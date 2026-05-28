@@ -75,17 +75,6 @@ function buildAgentDataMap(agentChain: any[]): Record<string, any> {
     }
 
     if (entry.agent === 'GovernanceApprovalAgent') {
-      const rec = entry.result?.approval_record
-      map['governance_approval'] = {
-        approval_state:    rec?.approval_status,
-        approval_required: rec?.requires_human_approval,
-        escalation_state:  rec?.requires_human_approval ? 'critical_review' : 'none',
-        approver_name:     rec?.requires_human_approval
-                             ? 'Awaiting race engineer approval'
-                             : 'System (auto-approved)',
-      }
-    }
-    if (entry.agent === 'GovernanceApprovalAgent') {
   const rec = entry.result?.approval_record
 
   map['governance_approval'] = {
@@ -97,21 +86,6 @@ function buildAgentDataMap(agentChain: any[]): Record<string, any> {
     approver_name: rec?.requires_human_approval
       ? 'Awaiting race engineer approval'
       : 'System (auto-approved)',
-  }
-
-  map['governance_console'] = {
-    approval_queue:
-      rec?.requires_human_approval
-        ? 'Pending Approval'
-        : 'Auto Approved',
-
-    reviewer:
-      rec?.requires_human_approval
-        ? 'Lead Race Engineer'
-        : 'System',
-
-    status:
-      rec?.approval_status || 'approved'
   }
 }
 
@@ -141,7 +115,6 @@ function animatePipeline(
     'safety_intelligence',
     'strategy_recommendation',
     'governance_approval',
-    'fan_engagement',
   ]
 
   const dataMap = buildAgentDataMap(agentChain)
@@ -289,7 +262,10 @@ function App() {
         const result = data.data
         setResponse(result)
 
-        const agentChain: any[] = result?.result?.agent_chain || []
+        const agentChain: any[] =
+  result?.result?.agent_chain ||
+  result?.agent_chain ||
+  []
 
         // Make sure the pipeline scaffold exists before animating
         setOrchestrationStages(prev => {
@@ -337,26 +313,37 @@ function App() {
 
     setWs(websocket)
     return () => websocket.close()
-  }, [initializeStages,isSimulatorRunning])
+  }, []) //[initializeStages,isSimulatorRunning])
 
   // ---------------------------------------------------------------------------
   // Poll governance approvals every 5 s
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    const fetchApprovals = async () => {
-      try {
-        const res = await fetch(`${API_URL}/governance/approvals`)
-        const data = await res.json()
-        if (data.success) setPendingApprovals(data.approvals)
-      } catch (error) {
-        console.error('Error fetching approvals:', error)
-      }
-    }
+  const fetchApprovals = async () => {
+    try {
+      const res = await fetch(`${API_URL}/governance/approvals`)
+      const data = await res.json()
 
+      if (data.success) {
+        setPendingApprovals(data.approvals)
+      }
+    } catch (error) {
+      console.error('Error fetching approvals:', error)
+    }
+  }
+
+  // Only fetch approvals when simulator is running
+  if (isSimulatorRunning) {
     fetchApprovals()
+
     const interval = setInterval(fetchApprovals, 15000)
+
     return () => clearInterval(interval)
-  }, [])
+  } else {
+    // Clear everything when stopped or refreshed
+    setPendingApprovals([])
+  }
+}, [isSimulatorRunning])
 
   // ---------------------------------------------------------------------------
   // Manual prompt submission
@@ -394,21 +381,36 @@ setChatHistory(prev => [
   },
   {
     role: 'assistant',
-    message:
-      data?.summary ||
-      data?.message ||
-      data?.result?.summary ||
-      'AI workflow executed successfully'
+   message:
+  data?.result?.result?.recommendation?.reasoning?.[0]
+    ?.description ||
+
+  data?.result?.result?.recommendation
+    ?.pit_window?.reason ||
+
+  data?.result?.result?.safety_context
+    ?.recommendation?.reason ||
+
+  data?.summary ||
+
+  'AI workflow completed'
   }
 ])
 
 // Automatically load fan messages
-if (data?.fan_messages?.length) {
-  const newMessages = data.fan_messages.map((msg: any) => ({
-    ...msg,
-    timestamp: new Date().toISOString(),
-    status: 'published'
-  }))
+// Automatically load fan messages
+if (
+  data?.result?.fan_messages?.length
+) {
+  const newMessages =
+    data.result.fan_messages.map( 
+      (msg: any) => ({
+        ...msg,
+        timestamp:
+          new Date().toISOString(),
+        status: 'published'
+      })
+    )
 
   setFanMessages(prev =>
     [...newMessages, ...prev].slice(0, 20)
@@ -418,7 +420,10 @@ if (data?.fan_messages?.length) {
 setPrompt('')
 
       // Animate pipeline using real agent_chain from response
-      const agentChain: any[] = data?.result?.agent_chain || []
+      const agentChain: any[] =
+  data?.result?.result?.agent_chain ||
+  data?.result?.agent_chain ||
+  []
 
       if (agentChain.length > 0) {
         // Real data path — drive animation from actual agent results
@@ -455,8 +460,6 @@ setPrompt('')
   'strategy_recommendation',
   'governance_approval',
   'governance_console',
-  'fan_engagement',
-  'fan_hub'
 ]
         stageIds.forEach((id, i) => {
           setTimeout(() => {
@@ -496,12 +499,13 @@ setPrompt('')
       await fetch(`${API_URL}/telemetry/stop`, {
         method: 'POST'
       })
+      setPendingApprovals([])
 
       setIsSimulatorRunning(false)
 
       // Clear telemetry
       setTelemetry(null)
-      setTelemetryHistory([])
+      setTelemetryHistory([]) // or setTelemetryHistory([]) if you want to clear history too
 
       // Clear AI pipeline
       setOrchestrationStages([])
@@ -771,11 +775,20 @@ setPrompt('')
             </div>
 
             <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-400">WebSocket</span>
-              <span className={`text-xs ${ws?.readyState === 1 ? 'text-green-400' : 'text-red-400'}`}>
-                {ws?.readyState === 1 ? 'Connected' : 'Disconnected'}
-              </span>
-            </div>
+  <span className="text-sm text-gray-400">WebSocket</span>
+
+  <span
+    className={`text-xs ${
+      isSimulatorRunning && ws?.readyState === 1
+        ? 'text-green-400'
+        : 'text-red-400'
+    }`}
+  >
+    {isSimulatorRunning && ws?.readyState === 1
+      ? 'Connected'
+      : 'Disconnected'}
+  </span>
+</div>
           </div>
 
           <div className="p-6 flex-1 overflow-auto">
@@ -994,13 +1007,19 @@ setPrompt('')
 
                 <div className="mt-6 flex flex-wrap gap-3">
                   {[
-                    'Analyze current telemetry',
-                    'Assess FER-16 tire vibration risk',
-                    'Recommend pit strategy for Ferrari',
-                    'Check pending governance approvals',
-                    'Generate fan-safe race update',
-                    'Simulate pit wall strategy'
-                  ].map((sample) => (
+  'Should Ferrari pit now?',
+  'Compare Leclerc telemetry vs Sainz',
+  'Assess current tire degradation risk',
+  'Predict safest pit window',
+  'What happens if we delay pit stop by 3 laps?',
+  'Generate race engineer recommendation',
+  'Summarize current telemetry status',
+  'How risky is current steering vibration?',
+  'Recommend aggressive strategy',
+  'Recommend conservative strategy',
+  'Generate fan-safe update for Tifosi',
+  'Predict next 5 laps performance'
+].map((sample) => (
                     <button
                       key={sample}
                       type="button"
