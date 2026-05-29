@@ -110,7 +110,7 @@ The system:
 - Escalates high-risk events
 
 #### 5. **Fan Engagement Agent**
-- Generates multilingual fan narratives (EN, ES, IT)
+- Generates multilingual fan narratives (EN, ES, IT, HI)
 - Creates emotional storytelling
 - Removes sensitive telemetry from messages
 - Personalizes race insights
@@ -357,7 +357,7 @@ TifosiX AI features a **production-grade, cinematic Formula 1 operating system i
 
 ### 4. Fan Intelligence Hub
 - Fan-safe narratives with emotional storytelling
-- Multilingual updates (EN, ES, IT)
+- Multilingual updates (EN, ES, IT, HI)
 - Personalized race insights
 - Real-time message streaming
 - Sentiment-aware content generation
