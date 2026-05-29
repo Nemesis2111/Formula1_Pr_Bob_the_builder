@@ -403,8 +403,6 @@ const fanResult =
       strategy_id: approvalRecord.strategy_id,
       recommendation: {
   user_prompt: 'Generate fan-safe telemetry update after governance approval',
-  direct_answer:
-    'Ferrari has approved a safety-first strategy response. The team is reacting to elevated race risk by preparing a controlled pit call and protecting the driver’s performance for the next stint.',
   pit_window: {
     action: 'immediate_pit_stop'
   },
