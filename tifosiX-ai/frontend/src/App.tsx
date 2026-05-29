@@ -212,8 +212,14 @@ const appendFanMessages = useCallback((newMsgs: any[]) => {
   }, [])
 
   useEffect(() => {
-    const wsUrl = import.meta.env.VITE_WS_URL || `ws://${window.location.host}/ws`
-    const websocket = new WebSocket(wsUrl)
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+
+const wsUrl =
+  window.location.hostname === 'localhost'
+    ? 'ws://localhost:3001'
+    : `${wsProtocol}//tifosix-backend-zenith.bobathon-us-south-1-bx2-1-eed9cf6127dd1cc2309a78aba5f4061d-0000.us-south.containers.appdomain.cloud`
+
+const websocket = new WebSocket(wsUrl)
 
     websocket.onopen = () => {
       console.log('✅ WebSocket connected')

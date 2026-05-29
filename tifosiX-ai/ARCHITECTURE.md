@@ -432,7 +432,11 @@ frontend/src/
 
 ```typescript
 // WebSocket connection
-const ws = new WebSocket('ws://localhost:3001');
+const ws = new WebSocket(
+  window.location.hostname === 'localhost'
+    ? 'ws://localhost:3001'
+    : 'wss://tifosix-backend-zenith.bobathon-us-south-1-bx2-1-eed9cf6127dd1cc2309a78aba5f4061d-0000.us-south.containers.appdomain.cloud'
+);
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
