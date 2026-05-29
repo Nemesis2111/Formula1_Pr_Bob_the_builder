@@ -739,6 +739,8 @@ MIT License - see LICENSE file for details
 
 For questions or issues, please open a GitHub issue or contact the development team.
 
+**Project Documentation:** [View on SharePoint](https://ibm-my.sharepoint.com/:b:/p/kali_johari/IQCuxa4Iz1oIToA-oNLRPIeDAcqWQjv9USMoD9rfK3HdMwk?e=YooP1J)
+
 ---
 
 **Built with ❤️ for the Bob-a-thon Hackathon**
