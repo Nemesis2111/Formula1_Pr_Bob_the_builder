@@ -735,11 +735,11 @@ MIT License - see LICENSE file for details
 
 ---
 
-## 📞 Support
+## 📞 Supporting Document
 
 For questions or issues, please open a GitHub issue or contact the development team.
 
-**Project Documentation:** [View on SharePoint](https://ibm-my.sharepoint.com/:b:/p/kali_johari/IQCuxa4Iz1oIToA-oNLRPIeDAcqWQjv9USMoD9rfK3HdMwk?e=YooP1J)
+**Project Documentation:** https://drive.google.com/drive/folders/1jEJVPyVBQerc101TVX7HCmIbMcwN2Yg9?usp=sharing
 
 ---
 
