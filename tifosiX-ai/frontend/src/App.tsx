@@ -12,7 +12,10 @@ import {
 import RaceTrackVisualization from './components/RaceTrackVisualization'
 import './App.css'
 
-const API_URL = import.meta.env.VITE_API_URL || '/api'
+const API_URL =
+  window.location.hostname === 'localhost'
+    ? 'http://localhost:3001'
+    : 'https://tifosix-backend-zenith.bobathon-us-south-1-bx2-1-eed9cf6127dd1cc2309a78aba5f4061d-0000.us-south.containers.appdomain.cloud'
 
 interface TelemetryEvent {
   event_id: string
@@ -358,7 +361,16 @@ const autoMessage =
 
     const fetchApprovals = async () => {
       try {
-        const res = await fetch(`${API_URL}/governance/approvals`)
+        const res = await fetch(
+  `${API_URL}/governance/approvals`,
+  {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  }
+)
+console.log('approval response:', await res.clone().text())
         const data = await res.json()
         if (data.success) setPendingApprovals(data.approvals)
       } catch (error) {
@@ -367,7 +379,8 @@ const autoMessage =
     }
 
    // fetchApprovals()
-    const interval = setInterval(fetchApprovals, 8000)
+    fetchApprovals()
+const interval = setInterval(fetchApprovals, 2000)
 
    return () => clearInterval(interval)
   }, [isSimulatorRunning])
@@ -583,12 +596,27 @@ if (generatedMessages.length > 0) {
   }
 
   const generateCritical = async () => {
-    try {
-      await fetch(`${API_URL}/telemetry/critical`, { method: 'POST' })
-    } catch (error) {
-      console.error('Error generating critical event:', error)
+  try {
+    const res = await fetch(`${API_URL}/telemetry/critical`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!res.ok) {
+      const errorText = await res.text()
+      console.error('Critical event API failed:', res.status, errorText)
+      return
     }
+
+    const data = await res.json()
+    console.log('Critical event generated:', data)
+
+  } catch (error) {
+    console.error('Error generating critical event:', error)
   }
+}
  
 
   const handleApproval = async (approvalId: string, action: string) => {

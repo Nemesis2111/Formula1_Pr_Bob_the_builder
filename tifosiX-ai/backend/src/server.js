@@ -10,7 +10,7 @@ import express from 'express';
 
 import cors from 'cors';
 
-import { WebSocketServer } from 'ws';
+import { WebSocketServer } from 'ws';grep -R "tifosix-backend-zenith" /usr/share/nginx/html
 
 import http from 'http';
 
